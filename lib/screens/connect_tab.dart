@@ -158,23 +158,78 @@ class _ConnectTabState extends State<ConnectTab> {
                     width: 10,
                     height: 10,
                     decoration: BoxDecoration(
-                      color: titleColor,
+                      color: service.isMuted
+                          ? ObsidianTheme.signalClip
+                          : titleColor,
                       shape: BoxShape.circle,
                       boxShadow: capturing
-                          ? [BoxShadow(color: titleColor, blurRadius: 8)]
+                          ? [
+                              BoxShadow(
+                                color: service.isMuted
+                                    ? ObsidianTheme.signalClip
+                                    : titleColor,
+                                blurRadius: 8,
+                              )
+                            ]
                           : null,
                     ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      title,
+                      service.isMuted ? 'SILENCIADO' : title,
                       style: ObsidianTheme.labelMd(
-                        color: titleColor,
+                        color: service.isMuted
+                            ? ObsidianTheme.signalClip
+                            : titleColor,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
+                  if (service.isStreaming) ...[
+                    GestureDetector(
+                      onTap: service.toggleMute,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: service.isMuted
+                              ? ObsidianTheme.signalClip.withValues(alpha: 0.16)
+                              : ObsidianTheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(
+                            color: service.isMuted
+                                ? ObsidianTheme.signalClip.withValues(alpha: 0.6)
+                                : ObsidianTheme.primary.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              service.isMuted ? Icons.mic_off : Icons.mic,
+                              size: 13,
+                              color: service.isMuted
+                                  ? ObsidianTheme.signalClip
+                                  : ObsidianTheme.primary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              service.isMuted ? 'SILENCIADO' : 'MUTE',
+                              style: ObsidianTheme.labelSm(
+                                color: service.isMuted
+                                    ? ObsidianTheme.signalClip
+                                    : ObsidianTheme.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
               const SizedBox(height: 12),

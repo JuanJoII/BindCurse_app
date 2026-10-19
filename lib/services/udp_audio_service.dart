@@ -9,6 +9,7 @@ import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/linked_device.dart';
+import 'background_service_manager.dart';
 import 'bindcurse_protocol.dart';
 import 'spectrum_analyzer.dart';
 
@@ -43,6 +44,7 @@ class UdpAudioService extends ChangeNotifier {
   bool _isCapturing = false;
   bool _monitorEnabled = false;
   bool _captureStarting = false;
+  bool _isMuted = false;
 
   final SpectrumAnalyzer _analyzer = SpectrumAnalyzer(bandCount: barCount);
   List<double> _bars = List<double>.filled(barCount, idleBar);
@@ -90,6 +92,7 @@ class UdpAudioService extends ChangeNotifier {
   // ---------------------------------------------------------------- getters
   bool get isCapturing => _isCapturing;
   bool get monitorEnabled => _monitorEnabled;
+  bool get isMuted => _isMuted;
   List<double> get spectrumBars => _bars;
   double? get currentDb => _currentDb;
   bool get isClipping => DateTime.now().isBefore(_clipUntil);
@@ -217,6 +220,32 @@ class UdpAudioService extends ChangeNotifier {
   void clearError() {
     _errorMessage = null;
     notifyListeners();
+  }
+
+  void toggleMute() {
+    _isMuted = !_isMuted;
+    _syncForegroundService();
+    notifyListeners();
+  }
+
+  void setMuted(bool value) {
+    if (_isMuted != value) {
+      _isMuted = value;
+      _syncForegroundService();
+      notifyListeners();
+    }
+  }
+
+  void _syncForegroundService() {
+    final target = _server != null && _server!.name.isNotEmpty
+        ? '${_server!.name} ($activeAddress)'
+        : (activeAddress ?? '$_hostInput:$_port');
+
+    BackgroundServiceManager.syncServiceState(
+      isStreaming: isStreaming,
+      isMuted: _isMuted,
+      connectionTarget: target,
+    );
   }
 
   // ---------------------------------------------------------------- monitor
@@ -372,6 +401,7 @@ class UdpAudioService extends ChangeNotifier {
     _linkState = LinkState.linked;
 
     _rememberLink(_server!);
+    _syncForegroundService();
     notifyListeners();
   }
 
@@ -424,6 +454,7 @@ class UdpAudioService extends ChangeNotifier {
         if (_linkState == LinkState.lost) {
           _linkState = LinkState.linked;
           _errorMessage = null;
+          _syncForegroundService();
         }
         notifyListeners();
         break;
@@ -444,6 +475,7 @@ class UdpAudioService extends ChangeNotifier {
       _linkState = LinkState.lost;
       _rttMs = null;
       _outgoing.clear();
+      _syncForegroundService();
       notifyListeners();
     }
 
@@ -475,6 +507,7 @@ class UdpAudioService extends ChangeNotifier {
     _outgoing.clear();
     _pingsInFlight.clear();
     _linkState = LinkState.idle;
+    _syncForegroundService();
 
     if (!_monitorEnabled) await _stopCapture();
     notifyListeners();
@@ -547,6 +580,19 @@ class UdpAudioService extends ChangeNotifier {
     final processed = Uint8List(byteLength);
     final output = ByteData.sublistView(processed);
     final sampleCount = byteLength >> 1;
+
+    if (_isMuted) {
+      processed.fillRange(0, processed.length, 0);
+      _currentDb = -60.0;
+      if (_linkState == LinkState.linked) _sendAudio(processed);
+      if (_uiThrottle.elapsedMilliseconds >= 33) {
+        _uiThrottle.reset();
+        _bars = List<double>.filled(barCount, idleBar);
+        notifyListeners();
+      }
+      return;
+    }
+
     final gain =
         _gainDb == 0.0 ? 1.0 : math.pow(10.0, _gainDb / 20.0).toDouble();
 
@@ -818,6 +864,7 @@ class UdpAudioService extends ChangeNotifier {
     _channel?.close();
     _captureSub?.cancel();
     _recorder.dispose();
+    BackgroundServiceManager.stopService();
     super.dispose();
   }
 }

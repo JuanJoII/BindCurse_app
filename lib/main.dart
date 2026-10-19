@@ -1,9 +1,11 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'screens/advanced_tab.dart';
 import 'screens/connect_tab.dart';
 import 'screens/devices_tab.dart';
+import 'services/background_service_manager.dart';
 import 'services/udp_audio_service.dart';
 import 'theme/obsidian_theme.dart';
 import 'widgets/bind_curse_header.dart';
@@ -50,10 +52,15 @@ class _BindCurseShellState extends State<BindCurseShell> {
   void initState() {
     super.initState();
     _audioService = UdpAudioService();
+    BackgroundServiceManager.initialize(_audioService);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      BackgroundServiceManager.requestPermissions();
+    });
   }
 
   @override
   void dispose() {
+    BackgroundServiceManager.dispose();
     _audioService.dispose();
     super.dispose();
   }
@@ -63,8 +70,9 @@ class _BindCurseShellState extends State<BindCurseShell> {
     return ListenableBuilder(
       listenable: _audioService,
       builder: (context, _) {
-        return Scaffold(
-          backgroundColor: ObsidianTheme.surface,
+        return WithForegroundTask(
+          child: Scaffold(
+            backgroundColor: ObsidianTheme.surface,
           body: SafeArea(
             bottom: false,
             child: Column(
@@ -89,9 +97,10 @@ class _BindCurseShellState extends State<BindCurseShell> {
             ),
           ),
           bottomNavigationBar: _buildBottomNavBar(),
-        );
-      },
-    );
+        ),
+      );
+    },
+  );
   }
 
   Widget _buildBottomNavBar() {
