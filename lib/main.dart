@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/advanced_tab.dart';
 import 'screens/connect_tab.dart';
 import 'screens/devices_tab.dart';
@@ -10,8 +11,9 @@ import 'services/udp_audio_service.dart';
 import 'theme/obsidian_theme.dart';
 import 'widgets/bind_curse_header.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SharedPreferences.getInstance();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,

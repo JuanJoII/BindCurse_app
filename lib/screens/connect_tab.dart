@@ -17,6 +17,8 @@ class ConnectTab extends StatefulWidget {
 class _ConnectTabState extends State<ConnectTab> {
   late final TextEditingController _ipController;
   late final TextEditingController _portController;
+  late final FocusNode _ipFocusNode;
+  late final FocusNode _portFocusNode;
   String? _lastReportedError;
 
   UdpAudioService get _service => widget.audioService;
@@ -26,7 +28,32 @@ class _ConnectTabState extends State<ConnectTab> {
     super.initState();
     _ipController = TextEditingController(text: _service.hostIp);
     _portController = TextEditingController(text: _service.port.toString());
+    _ipFocusNode = FocusNode();
+    _portFocusNode = FocusNode();
+    _ipFocusNode.addListener(_onIpFocusChange);
+    _portFocusNode.addListener(_onPortFocusChange);
     _service.addListener(_onServiceUpdate);
+  }
+
+  void _onIpFocusChange() {
+    if (!_ipFocusNode.hasFocus) {
+      final ip = _ipController.text.trim();
+      if (ip != _service.hostIp) {
+        _service.setHostIp(ip);
+      }
+    }
+  }
+
+  void _onPortFocusChange() {
+    if (!_portFocusNode.hasFocus) {
+      final text = _portController.text.trim();
+      final parsed = int.tryParse(text);
+      if (parsed != null && parsed > 0 && parsed <= 65535) {
+        _service.setPort(parsed);
+      } else {
+        _portController.text = _service.port.toString();
+      }
+    }
   }
 
   void _onServiceUpdate() {
@@ -35,11 +62,13 @@ class _ConnectTabState extends State<ConnectTab> {
   }
 
   void _syncControllers() {
-    if (_ipController.text.trim() != _service.hostIp) {
+    if (!_ipFocusNode.hasFocus && _ipController.text.trim() != _service.hostIp) {
       _ipController.text = _service.hostIp;
     }
-    final port = _service.port.toString();
-    if (_portController.text != port) _portController.text = port;
+    if (!_portFocusNode.hasFocus) {
+      final port = _service.port.toString();
+      if (_portController.text != port) _portController.text = port;
+    }
   }
 
   void _checkErrorToast() {
@@ -63,6 +92,10 @@ class _ConnectTabState extends State<ConnectTab> {
   @override
   void dispose() {
     _service.removeListener(_onServiceUpdate);
+    _ipFocusNode.removeListener(_onIpFocusChange);
+    _portFocusNode.removeListener(_onPortFocusChange);
+    _ipFocusNode.dispose();
+    _portFocusNode.dispose();
     _ipController.dispose();
     _portController.dispose();
     super.dispose();
@@ -439,6 +472,7 @@ class _ConnectTabState extends State<ConnectTab> {
                 child: _buildField(
                   label: 'DIRECCIÓN IP DEL HOST',
                   controller: _ipController,
+                  focusNode: _ipFocusNode,
                   hint: '192.168.1.X',
                   enabled: !locked,
                   keyboardType: TextInputType.url,
@@ -451,12 +485,15 @@ class _ConnectTabState extends State<ConnectTab> {
                 child: _buildField(
                   label: 'PUERTO',
                   controller: _portController,
-                  hint: '9920',
+                  focusNode: _portFocusNode,
+                  hint: '5005',
                   enabled: !locked,
                   keyboardType: TextInputType.number,
                   onChanged: (v) {
-                    final parsed = int.tryParse(v);
-                    if (parsed != null) service.setPort(parsed);
+                    final parsed = int.tryParse(v.trim());
+                    if (parsed != null && parsed > 0 && parsed <= 65535) {
+                      service.setPort(parsed);
+                    }
                   },
                 ),
               ),
@@ -506,6 +543,7 @@ class _ConnectTabState extends State<ConnectTab> {
   Widget _buildField({
     required String label,
     required TextEditingController controller,
+    FocusNode? focusNode,
     required String hint,
     required bool enabled,
     required TextInputType keyboardType,
@@ -529,6 +567,7 @@ class _ConnectTabState extends State<ConnectTab> {
           ),
           child: TextField(
             controller: controller,
+            focusNode: focusNode,
             enabled: enabled,
             keyboardType: keyboardType,
             autocorrect: false,
@@ -643,7 +682,15 @@ class _ConnectTabState extends State<ConnectTab> {
     return CurseGlowButton(
       linkState: service.linkState,
       onTap: () {
+        FocusScope.of(context).unfocus();
         if (service.linkState == LinkState.idle) {
+          final ip = _ipController.text.trim();
+          if (ip.isNotEmpty) service.setHostIp(ip);
+          final port = int.tryParse(_portController.text.trim());
+          if (port != null && port > 0 && port <= 65535) {
+            service.setPort(port);
+          }
+
           TopToast.show(
             context,
             message:

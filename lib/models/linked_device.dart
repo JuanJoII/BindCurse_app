@@ -47,13 +47,31 @@ class LinkedDevice {
       };
 
   factory LinkedDevice.fromJson(Map<String, dynamic> json) {
-    final last = json['lastConnected'] as String?;
+    final last = json['lastConnected']?.toString();
+    final rawPort = json['port'];
+    final int parsedPort;
+    if (rawPort is int) {
+      parsedPort = rawPort;
+    } else if (rawPort is num) {
+      parsedPort = rawPort.toInt();
+    } else if (rawPort is String) {
+      parsedPort = int.tryParse(rawPort) ?? 5005;
+    } else {
+      parsedPort = 5005;
+    }
+
+    final id = json['id']?.toString() ??
+        DateTime.now().microsecondsSinceEpoch.toString();
+    final ip = json['ip']?.toString() ?? '127.0.0.1';
+    final name = json['name']?.toString() ?? ip;
+    final os = json['os']?.toString();
+
     return LinkedDevice(
-      id: json['id'] as String,
-      name: json['name'] as String,
-      ip: json['ip'] as String,
-      port: json['port'] as int,
-      os: json['os'] as String?,
+      id: id,
+      name: name.isEmpty ? ip : name,
+      ip: ip,
+      port: parsedPort,
+      os: (os == null || os.isEmpty) ? null : os,
       lastConnected: last == null ? null : DateTime.tryParse(last),
     );
   }

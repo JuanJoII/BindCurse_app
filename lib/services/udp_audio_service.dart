@@ -84,6 +84,8 @@ class UdpAudioService extends ChangeNotifier {
   final Set<String> _probing = {};
   List<ServerInfo> _discovered = [];
   bool _isScanning = false;
+  bool _isPreferencesLoaded = false;
+  final Completer<void> _prefsCompleter = Completer<void>();
 
   UdpAudioService() {
     _loadPreferences();
@@ -131,7 +133,34 @@ class UdpAudioService extends ChangeNotifier {
   Future<void> _loadPreferences() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      // Drop data stored by the old mock build.
+
+      // Check legacy 'linked_devices' if saved_hosts_v2 is missing
+      var devicesJson = prefs.getString('saved_hosts_v2');
+      if (devicesJson == null || devicesJson.isEmpty) {
+        final legacyJson = prefs.getString('linked_devices');
+        if (legacyJson != null && legacyJson.isNotEmpty) {
+          devicesJson = legacyJson;
+        }
+      }
+
+      // Check legacy last sealed info if last_link_v2 is missing
+      final lastJson = prefs.getString('last_link_v2');
+      LinkedDevice? legacyLastLink;
+      if (lastJson == null || lastJson.isEmpty) {
+        final legacyIp = prefs.getString('last_sealed_ip');
+        final legacyPort = prefs.getInt('last_sealed_port');
+        final legacyName = prefs.getString('last_sealed_name');
+        if (legacyIp != null && legacyIp.isNotEmpty) {
+          legacyLastLink = LinkedDevice(
+            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            name: (legacyName != null && legacyName.isNotEmpty) ? legacyName : legacyIp,
+            ip: legacyIp,
+            port: legacyPort ?? BindCurseProtocol.defaultPort,
+          );
+        }
+      }
+
+      // Drop obsolete keys now that we've checked for any migration
       for (final key in const [
         'linked_devices',
         'last_sealed_name',
@@ -140,37 +169,91 @@ class UdpAudioService extends ChangeNotifier {
       ]) {
         await prefs.remove(key);
       }
-      _hostInput = prefs.getString('host_ip_v2') ?? '';
-      _port = prefs.getInt('host_port_v2') ?? BindCurseProtocol.defaultPort;
-      _gainDb = prefs.getDouble('gain_db_v2') ?? 0.0;
-      final latency = prefs.getString('latency_v2');
-      _latencyTarget = LatencyTarget.values.firstWhere(
-        (l) => l.name == latency,
-        orElse: () => LatencyTarget.studio,
-      );
-      final devicesJson = prefs.getString('saved_hosts_v2');
-      if (devicesJson != null) {
-        _devices = (jsonDecode(devicesJson) as List)
-            .map((e) => LinkedDevice.fromJson(e as Map<String, dynamic>))
-            .toList();
+
+      _hostInput = prefs.getString('host_ip_v2') ?? _hostInput;
+      final savedPort = prefs.getInt('host_port_v2');
+      if (savedPort == null || savedPort == 9920) {
+        _port = BindCurseProtocol.defaultPort;
+      } else {
+        _port = savedPort;
       }
-      final lastJson = prefs.getString('last_link_v2');
-      if (lastJson != null) {
-        _lastLink = LinkedDevice.fromJson(
-          jsonDecode(lastJson) as Map<String, dynamic>,
+      _gainDb = prefs.getDouble('gain_db_v2') ?? _gainDb;
+      final latency = prefs.getString('latency_v2');
+      if (latency != null) {
+        _latencyTarget = LatencyTarget.values.firstWhere(
+          (l) => l.name == latency,
+          orElse: () => _latencyTarget,
         );
       }
-      notifyListeners();
-    } catch (_) {
-      // Corrupted preferences: start clean.
+
+      if (devicesJson != null && devicesJson.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(devicesJson);
+          if (decoded is List) {
+            final loaded = <LinkedDevice>[];
+            for (final item in decoded) {
+              try {
+                if (item is Map) {
+                  loaded.add(
+                    LinkedDevice.fromJson(Map<String, dynamic>.from(item)),
+                  );
+                }
+              } catch (e) {
+                debugPrint('BindCurse: error parsing device: $e');
+              }
+            }
+            if (loaded.isNotEmpty) {
+              _devices = loaded;
+            }
+          }
+        } catch (e) {
+          debugPrint('BindCurse: error decoding devices JSON: $e');
+        }
+      }
+
+      if (lastJson != null && lastJson.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(lastJson);
+          if (decoded is Map) {
+            _lastLink = LinkedDevice.fromJson(
+              Map<String, dynamic>.from(decoded),
+            );
+          }
+        } catch (e) {
+          debugPrint('BindCurse: error decoding last link JSON: $e');
+        }
+      } else if (legacyLastLink != null) {
+        _lastLink = legacyLastLink;
+      }
+
+      // Fallback: if no lastLink was persisted but we have saved devices, use the first one
+      if (_lastLink == null && _devices.isNotEmpty) {
+        _lastLink = _devices.first;
+      }
+
+      // If hostInput is empty and we have a lastLink, populate hostInput and port
+      if (_hostInput.isEmpty && _lastLink != null) {
+        _hostInput = _lastLink!.ip;
+        _port = _lastLink!.port;
+      }
+    } catch (e) {
+      debugPrint('BindCurse: error loading preferences: $e');
     } finally {
+      _isPreferencesLoaded = true;
+      if (!_prefsCompleter.isCompleted) {
+        _prefsCompleter.complete();
+      }
       // Activar micrófono de inmediato por defecto para mostrar el espectro visual
       _monitorEnabled = true;
       _startCapture();
+      notifyListeners();
     }
   }
 
   Future<void> _savePreferences() async {
+    if (!_isPreferencesLoaded) {
+      await _prefsCompleter.future;
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('host_ip_v2', _hostInput);
@@ -186,7 +269,9 @@ class UdpAudioService extends ChangeNotifier {
       } else {
         await prefs.remove('last_link_v2');
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('BindCurse: error saving preferences: $e');
+    }
   }
 
   // --------------------------------------------------------------- settings
@@ -314,6 +399,8 @@ class UdpAudioService extends ChangeNotifier {
       return;
     }
 
+    await _savePreferences();
+
     final token = ++_connectToken;
     _linkState = LinkState.connecting;
     notifyListeners();
@@ -416,16 +503,26 @@ class UdpAudioService extends ChangeNotifier {
     final index =
         _devices.indexWhere((d) => d.ip == info.ip && d.port == info.port);
     if (index >= 0) {
-      _devices[index] =
-          _devices[index].copyWith(os: info.os, lastConnected: now);
-      _lastLink = _devices[index];
+      final existing = _devices[index];
+      final updated = existing.copyWith(
+        name: (info.name.isNotEmpty && info.name != info.ip)
+            ? info.name
+            : existing.name,
+        os: info.os.isNotEmpty ? info.os : existing.os,
+        lastConnected: now,
+      );
+      _devices = [
+        updated,
+        ..._devices.where((d) => d.id != updated.id),
+      ];
+      _lastLink = updated;
     } else {
       final device = LinkedDevice(
         id: now.microsecondsSinceEpoch.toString(),
-        name: info.name,
+        name: info.name.isNotEmpty ? info.name : info.ip,
         ip: info.ip,
         port: info.port,
-        os: info.os,
+        os: info.os.isNotEmpty ? info.os : null,
         lastConnected: now,
       );
       _devices = [device, ..._devices];
@@ -712,7 +809,12 @@ class UdpAudioService extends ChangeNotifier {
         );
         if (reply != null && reply.length > 2 && reply[2].isNotEmpty) {
           final i = _devices.indexWhere((d) => d.id == device.id);
-          if (i >= 0) _devices[i] = _devices[i].copyWith(os: reply[2]);
+          if (i >= 0) {
+            _devices[i] = _devices[i].copyWith(os: reply[2]);
+            if (_lastLink?.id == device.id) {
+              _lastLink = _devices[i];
+            }
+          }
           _savePreferences();
         }
       } else {
@@ -800,17 +902,34 @@ class UdpAudioService extends ChangeNotifier {
     required int port,
     String? os,
   }) {
+    final trimmedIp = ip.trim();
+    final trimmedName = name.trim().isEmpty ? trimmedIp : name.trim();
     final existing =
-        _devices.where((d) => d.ip == ip.trim() && d.port == port).firstOrNull;
-    if (existing != null) return existing;
+        _devices.where((d) => d.ip == trimmedIp && d.port == port).firstOrNull;
+    if (existing != null) {
+      final updated = existing.copyWith(
+        name: trimmedName,
+        os: (os != null && os.isNotEmpty) ? os : existing.os,
+      );
+      _devices = [
+        updated,
+        ..._devices.where((d) => d.id != updated.id),
+      ];
+      if (_lastLink?.id == updated.id) _lastLink = updated;
+      _savePreferences();
+      notifyListeners();
+      probeDevice(updated);
+      return updated;
+    }
     final device = LinkedDevice(
       id: DateTime.now().microsecondsSinceEpoch.toString(),
-      name: name.trim().isEmpty ? ip.trim() : name.trim(),
-      ip: ip.trim(),
+      name: trimmedName,
+      ip: trimmedIp,
       port: port,
       os: (os == null || os.isEmpty) ? null : os,
     );
     _devices = [device, ..._devices];
+    _lastLink ??= device;
     _discovered.removeWhere((s) => s.ip == device.ip && s.port == device.port);
     _savePreferences();
     notifyListeners();
@@ -849,7 +968,9 @@ class UdpAudioService extends ChangeNotifier {
   void removeDevice(String id) {
     _devices = _devices.where((d) => d.id != id).toList();
     _probes.remove(id);
-    if (_lastLink?.id == id) _lastLink = null;
+    if (_lastLink?.id == id) {
+      _lastLink = _devices.firstOrNull;
+    }
     _savePreferences();
     notifyListeners();
   }
@@ -863,8 +984,12 @@ class UdpAudioService extends ChangeNotifier {
     }
     _channel?.close();
     _captureSub?.cancel();
-    _recorder.dispose();
-    BackgroundServiceManager.stopService();
+    try {
+      _recorder.dispose().catchError((_) {});
+    } catch (_) {}
+    try {
+      BackgroundServiceManager.stopService();
+    } catch (_) {}
     super.dispose();
   }
 }

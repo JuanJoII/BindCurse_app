@@ -11,7 +11,7 @@ Cliente móvil en Flutter y servidor receptor en Python para transmisión de mic
 El archivo [`bindcurse_server.py`](file:///C:/Users/57314/Desktop/Dev_Projects/bind_curse_app/bindcurse_server.py) ya está listo en el proyecto. No requiere librerías externas para funcionar (incluye modo VU meter en consola y guardado en archivo WAV).
 
 ```bash
-# Modo básico con medidor VU en la terminal (puerto 9920 por defecto):
+# Modo básico con medidor VU en la terminal (puerto 5005 por defecto):
 python bindcurse_server.py --vu
 
 # Con guardado de sesión a archivo WAV:

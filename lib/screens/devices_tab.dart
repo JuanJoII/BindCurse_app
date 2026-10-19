@@ -122,7 +122,7 @@ class _DevicesTabState extends State<DevicesTab> {
               ],
               _dialogInput('Dirección IP', ipCtrl, '192.168.1.50'),
               const SizedBox(height: 10),
-              _dialogInput('Puerto UDP', portCtrl, '9920', isNumber: true),
+              _dialogInput('Puerto UDP', portCtrl, '5005', isNumber: true),
             ],
           ),
         ),

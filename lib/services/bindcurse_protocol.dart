@@ -18,7 +18,7 @@ import 'dart:typed_data';
 ///   `BCPM` (4 bytes) + sequence (uint32 LE) + PCM 16-bit signed LE, 48 kHz, mono.
 class BindCurseProtocol {
   static const int version = 1;
-  static const int defaultPort = 9920;
+  static const int defaultPort = 5005;
 
   static const String hello = 'BINDCURSE_HELLO';
   static const String ack = 'BINDCURSE_ACK';
