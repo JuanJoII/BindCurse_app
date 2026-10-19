@@ -160,6 +160,10 @@ class UdpAudioService extends ChangeNotifier {
       notifyListeners();
     } catch (_) {
       // Corrupted preferences: start clean.
+    } finally {
+      // Activar micrófono de inmediato por defecto para mostrar el espectro visual
+      _monitorEnabled = true;
+      _startCapture();
     }
   }
 

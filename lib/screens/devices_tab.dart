@@ -862,37 +862,6 @@ class _DevicesTabState extends State<DevicesTab> {
             ),
           ),
         ),
-        const SizedBox(height: 12),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: ObsidianTheme.surfaceContainerLowest,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: ObsidianTheme.primary.withValues(alpha: 0.2)),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.token_outlined, size: 16, color: ObsidianTheme.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Protocolo BindCurse UDP v${BindCurseProtocol.version}',
-                  style: ObsidianTheme.labelSm(
-                    color: ObsidianTheme.onSurfaceVariant,
-                    letterSpacing: 0.2,
-                  ),
-                ),
-              ),
-              Text(
-                'PCM 16-bit · 48 kHz',
-                style: ObsidianTheme.labelSm(
-                  color: ObsidianTheme.primary,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }

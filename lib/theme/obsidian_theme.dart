@@ -38,8 +38,8 @@ class ObsidianTheme {
   static const Color onErrorContainer = Color(0xFFFFDAD6);
 
   // Functional Telemetry
-  static const Color signalOnline = Color(0xFF10B981);
-  static const Color signalWarning = Color(0xFFF59E0B);
+  static const Color signalOnline = Color(0xFFFAC811); // Amarillo contrastante para éxito/enlazado
+  static const Color signalWarning = Color(0xFF31AEE8); // Azul complementario para negociando/buscando
   static const Color signalClip = Color(0xFFEF4444);
 
   // Typography Styles

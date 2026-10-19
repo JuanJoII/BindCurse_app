@@ -7,10 +7,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(find.text('BindCurse'), findsOneWidget);
-    expect(find.text('CURSED LINK // UDP'), findsOneWidget);
     expect(find.text('Vínculo de Red'), findsOneWidget);
     expect(find.text('Calibración de Audio'), findsOneWidget);
-    expect(find.text('Vincular Audio (Bind)'), findsOneWidget);
+    expect(find.text('Curse'), findsOneWidget);
 
     // Switch to Dispositivos tab
     await tester.tap(find.text('Dispositivos'));
@@ -19,5 +18,12 @@ void main() {
     expect(find.text('Dispositivos Sellados'), findsOneWidget);
     // Verified that mock devices are removed and real state is rendered
     expect(find.text('Aún no hay altares sellados'), findsOneWidget);
+
+    // Switch to Avanzado tab
+    await tester.tap(find.text('Avanzado'));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('Tamaño de Paquete (Latencia)'), findsOneWidget);
+    expect(find.text('Acerca de la app'), findsOneWidget);
   });
 }

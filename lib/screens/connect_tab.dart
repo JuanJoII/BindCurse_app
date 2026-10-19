@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import '../services/udp_audio_service.dart';
 import '../theme/obsidian_theme.dart';
+import '../widgets/audio_wave_visualizer.dart';
+import '../widgets/curse_glow_button.dart';
+import '../widgets/top_toast.dart';
 
 class ConnectTab extends StatefulWidget {
   final UdpAudioService audioService;
@@ -14,6 +17,7 @@ class ConnectTab extends StatefulWidget {
 class _ConnectTabState extends State<ConnectTab> {
   late final TextEditingController _ipController;
   late final TextEditingController _portController;
+  String? _lastReportedError;
 
   UdpAudioService get _service => widget.audioService;
 
@@ -22,7 +26,12 @@ class _ConnectTabState extends State<ConnectTab> {
     super.initState();
     _ipController = TextEditingController(text: _service.hostIp);
     _portController = TextEditingController(text: _service.port.toString());
-    _service.addListener(_syncControllers);
+    _service.addListener(_onServiceUpdate);
+  }
+
+  void _onServiceUpdate() {
+    _syncControllers();
+    _checkErrorToast();
   }
 
   void _syncControllers() {
@@ -33,9 +42,27 @@ class _ConnectTabState extends State<ConnectTab> {
     if (_portController.text != port) _portController.text = port;
   }
 
+  void _checkErrorToast() {
+    final err = _service.errorMessage;
+    if (err != null && err != _lastReportedError) {
+      _lastReportedError = err;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        TopToast.show(
+          context,
+          message: err,
+          icon: Icons.error_outline,
+          color: ObsidianTheme.signalClip,
+        );
+      });
+    } else if (err == null) {
+      _lastReportedError = null;
+    }
+  }
+
   @override
   void dispose() {
-    _service.removeListener(_syncControllers);
+    _service.removeListener(_onServiceUpdate);
     _ipController.dispose();
     _portController.dispose();
     super.dispose();
@@ -49,10 +76,6 @@ class _ConnectTabState extends State<ConnectTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (service.errorMessage != null) ...[
-            _buildErrorBanner(service),
-            const SizedBox(height: 12),
-          ],
           _buildMeterCard(service),
           const SizedBox(height: 16),
           if (service.lastLink != null) ...[
@@ -69,39 +92,6 @@ class _ConnectTabState extends State<ConnectTab> {
     );
   }
 
-  // ------------------------------------------------------------------ error
-  Widget _buildErrorBanner(UdpAudioService service) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: ObsidianTheme.errorContainer.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: ObsidianTheme.error.withValues(alpha: 0.5)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.error_outline, color: ObsidianTheme.error, size: 18),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              service.errorMessage!,
-              style: ObsidianTheme.bodySm(color: ObsidianTheme.onErrorContainer),
-            ),
-          ),
-          GestureDetector(
-            onTap: service.clearError,
-            child: const Icon(
-              Icons.close,
-              color: ObsidianTheme.onErrorContainer,
-              size: 16,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   // ------------------------------------------------------------------ meter
   Widget _buildMeterCard(UdpAudioService service) {
     final capturing = service.isCapturing;
@@ -111,7 +101,7 @@ class _ConnectTabState extends State<ConnectTab> {
     final clipping = service.isClipping;
 
     final (String title, Color titleColor) = switch (state) {
-      LinkState.linked => ('TRANSMITIENDO PCM 48KHZ', ObsidianTheme.signalOnline),
+      LinkState.linked => ('TRANSMITIENDO', ObsidianTheme.signalOnline),
       LinkState.lost => ('ENLACE CAÍDO · SIN PONG', ObsidianTheme.signalClip),
       LinkState.connecting => ('NEGOCIANDO ENLACE', ObsidianTheme.signalWarning),
       LinkState.idle => capturing
@@ -185,7 +175,6 @@ class _ConnectTabState extends State<ConnectTab> {
                       ),
                     ),
                   ),
-                  _buildMonitorToggle(service),
                 ],
               ),
               const SizedBox(height: 12),
@@ -223,37 +212,18 @@ class _ConnectTabState extends State<ConnectTab> {
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               Container(
-                height: 36,
-                padding: const EdgeInsets.all(6),
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
                 decoration: BoxDecoration(
                   color: ObsidianTheme.surfaceContainerLowest,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: List.generate(bars.length, (index) {
-                    final value = bars[index];
-                    return Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                          right: index == bars.length - 1 ? 0 : 4,
-                        ),
-                        child: FractionallySizedBox(
-                          heightFactor: value.clamp(0.06, 1.0),
-                          alignment: Alignment.bottomCenter,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 60),
-                            decoration: BoxDecoration(
-                              color: _barColor(value, clipping),
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ),
-                      ),
-                    );
-                  }),
+                child: AudioWaveVisualizer(
+                  values: bars,
+                  isClipping: clipping,
+                  height: 42,
                 ),
               ),
               const SizedBox(height: 4),
@@ -270,101 +240,11 @@ class _ConnectTabState extends State<ConnectTab> {
                     ),
                 ],
               ),
-              if (service.isStreaming) ...[
-                const SizedBox(height: 10),
-                _buildTelemetryRow(service),
-              ],
             ],
           ),
         ],
       ),
     );
-  }
-
-  Widget _buildMonitorToggle(UdpAudioService service) {
-    final streaming = service.isStreaming || service.isConnecting;
-    final on = service.monitorEnabled;
-    return GestureDetector(
-      onTap: streaming ? null : service.toggleMonitor,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: on
-              ? ObsidianTheme.primary.withValues(alpha: 0.18)
-              : ObsidianTheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(
-            color: ObsidianTheme.primary.withValues(alpha: on ? 0.5 : 0.22),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              on ? Icons.hearing : Icons.hearing_disabled,
-              size: 12,
-              color: on ? ObsidianTheme.primary : ObsidianTheme.secondary,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              on ? 'MONITOR ON' : 'MONITOR',
-              style: ObsidianTheme.labelSm(
-                color: on ? ObsidianTheme.primary : ObsidianTheme.secondary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTelemetryRow(UdpAudioService service) {
-    final mb = service.bytesSent / (1024 * 1024);
-    final items = <(String, String)>[
-      ('PAQUETES', '${service.packetsSent}'),
-      ('ENVIADO', '${mb.toStringAsFixed(2)} MB'),
-      ('RTT', service.rttMs == null ? '—' : '${service.rttMs} ms'),
-    ];
-    return Row(
-      children: [
-        for (var i = 0; i < items.length; i++) ...[
-          if (i > 0) const SizedBox(width: 6),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              decoration: BoxDecoration(
-                color: ObsidianTheme.surfaceContainerLowest,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    items[i].$1,
-                    style: ObsidianTheme.labelSm(color: ObsidianTheme.outline),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    items[i].$2,
-                    style: ObsidianTheme.labelMd(
-                      color: ObsidianTheme.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Color _barColor(double value, bool clipping) {
-    if (clipping && value > 0.9) return ObsidianTheme.signalClip;
-    if (value > 0.85) return ObsidianTheme.primary;
-    if (value > 0.55) return ObsidianTheme.primaryContainer;
-    if (value > 0.3) return ObsidianTheme.secondaryContainer;
-    return ObsidianTheme.surfaceContainerHigh;
   }
 
   // --------------------------------------------------------- quick reconnect
@@ -475,21 +355,6 @@ class _ConnectTabState extends State<ConnectTab> {
   // ------------------------------------------------------------ network card
   Widget _buildNetworkLinkCard(UdpAudioService service) {
     final locked = service.isStreaming || service.isConnecting;
-    final state = service.linkState;
-    final String badge = switch (state) {
-      LinkState.idle => 'UDP · HANDSHAKE',
-      LinkState.connecting => 'NEGOCIANDO…',
-      LinkState.linked =>
-        service.rttMs == null ? 'ENLAZADO' : 'RTT ${service.rttMs} MS',
-      LinkState.lost => 'SIN RESPUESTA',
-    };
-    final Color badgeColor = switch (state) {
-      LinkState.idle => ObsidianTheme.primary,
-      LinkState.connecting => ObsidianTheme.signalWarning,
-      LinkState.linked => ObsidianTheme.signalOnline,
-      LinkState.lost => ObsidianTheme.signalClip,
-    };
-
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -501,42 +366,14 @@ class _ConnectTabState extends State<ConnectTab> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(
-                    locked ? Icons.lock : Icons.lock_open,
-                    color: ObsidianTheme.primary,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Text('Vínculo de Red', style: ObsidianTheme.headlineSm()),
-                ],
+              Icon(
+                locked ? Icons.lock : Icons.lock_open,
+                color: ObsidianTheme.primary,
+                size: 18,
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: badgeColor.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: badgeColor.withValues(alpha: 0.35)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: badgeColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    Text(badge, style: ObsidianTheme.labelSm(color: badgeColor)),
-                  ],
-                ),
-              ),
+              const SizedBox(width: 8),
+              Text('Vínculo de Red', style: ObsidianTheme.headlineSm()),
             ],
           ),
           const SizedBox(height: 14),
@@ -602,51 +439,10 @@ class _ConnectTabState extends State<ConnectTab> {
                       ),
                     ),
                   ),
-                  Text(
-                    service.activeAddress ?? '',
-                    style: ObsidianTheme.labelSm(
-                      color: ObsidianTheme.signalOnline,
-                    ),
-                  ),
                 ],
               ),
             ),
           ],
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-            decoration: BoxDecoration(
-              color: ObsidianTheme.surfaceContainerLowest,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: ObsidianTheme.primary.withValues(alpha: 0.2),
-              ),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.graphic_eq, size: 16, color: ObsidianTheme.primary),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'PCM crudo vía UDP',
-                    style: ObsidianTheme.labelSm(
-                      color: ObsidianTheme.secondary,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ),
-                Text(
-                  '48 kHz / 16-bit Mono',
-                  style: ObsidianTheme.labelSm(
-                    color: ObsidianTheme.primary,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
@@ -728,19 +524,12 @@ class _ConnectTabState extends State<ConnectTab> {
                   Text('Calibración de Audio', style: ObsidianTheme.headlineSm()),
                 ],
               ),
-              Row(
-                children: [
-                  const Icon(
-                    Icons.speed,
-                    size: 14,
-                    color: ObsidianTheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Paquete: ${service.latencyTarget.packetMs}ms',
-                    style: ObsidianTheme.labelSm(color: ObsidianTheme.primary),
-                  ),
-                ],
+              Text(
+                gainStr,
+                style: ObsidianTheme.labelMd(
+                  color: ObsidianTheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
@@ -753,11 +542,8 @@ class _ConnectTabState extends State<ConnectTab> {
                 style: ObsidianTheme.labelMd(color: ObsidianTheme.onSurface),
               ),
               Text(
-                gainStr,
-                style: ObsidianTheme.labelMd(
-                  color: ObsidianTheme.primary,
-                  fontWeight: FontWeight.w600,
-                ),
+                'Nivel digital',
+                style: ObsidianTheme.labelSm(color: ObsidianTheme.outline),
               ),
             ],
           ),
@@ -792,68 +578,6 @@ class _ConnectTabState extends State<ConnectTab> {
                 ),
             ],
           ),
-          const SizedBox(height: 14),
-          Text(
-            'TAMAÑO DE PAQUETE (LATENCIA)',
-            style: ObsidianTheme.labelSm(color: ObsidianTheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: LatencyTarget.values.map((target) {
-              final selected = service.latencyTarget == target;
-              return Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    right: target == LatencyTarget.values.last ? 0 : 6,
-                  ),
-                  child: GestureDetector(
-                    onTap: () => service.setLatencyTarget(target),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 10,
-                        horizontal: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: selected
-                            ? ObsidianTheme.surfaceContainerHighest
-                            : ObsidianTheme.surfaceContainerLowest,
-                        borderRadius: BorderRadius.circular(9),
-                        border: Border.all(
-                          color: selected
-                              ? ObsidianTheme.primary.withValues(alpha: 0.35)
-                              : Colors.transparent,
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            target.label,
-                            style: ObsidianTheme.labelMd(
-                              color: selected
-                                  ? ObsidianTheme.primary
-                                  : ObsidianTheme.onSurfaceVariant,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '${target.rangeLabel} · ${target.chunkBytes} B',
-                            style: ObsidianTheme.labelSm(
-                              color: selected
-                                  ? ObsidianTheme.secondary
-                                  : ObsidianTheme.onSurfaceVariant
-                                      .withValues(alpha: 0.7),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
         ],
       ),
     );
@@ -861,121 +585,20 @@ class _ConnectTabState extends State<ConnectTab> {
 
   // ------------------------------------------------------------ main action
   Widget _buildMainTransmitAction(UdpAudioService service) {
-    final state = service.linkState;
-    final active = state != LinkState.idle;
-    final connecting = state == LinkState.connecting;
-
-    final String label = switch (state) {
-      LinkState.idle => 'Vincular Audio (Bind)',
-      LinkState.connecting => 'Negociando… (Cancelar)',
-      LinkState.linked || LinkState.lost => 'Cortar Vínculo (Stop)',
-    };
-
-    return Column(
-      children: [
-        GestureDetector(
-          onTap: service.toggleStreaming,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: active && !connecting
-                    ? const [Color(0xFF991B1B), Color(0xFFEF4444), Color(0xFFB91C1C)]
-                    : const [
-                        ObsidianTheme.onPrimaryFixedVariant,
-                        ObsidianTheme.primaryContainer,
-                        ObsidianTheme.secondaryContainer,
-                      ],
-              ),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: active && !connecting
-                    ? ObsidianTheme.signalClip.withValues(alpha: 0.6)
-                    : ObsidianTheme.primary.withValues(alpha: 0.45),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: active && !connecting
-                      ? ObsidianTheme.signalClip.withValues(alpha: 0.4)
-                      : const Color(0xFFC084FC).withValues(alpha: 0.4),
-                  blurRadius: 24,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: connecting
-                      ? const Padding(
-                          padding: EdgeInsets.all(6),
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : Icon(
-                          active ? Icons.stop_rounded : Icons.all_inclusive,
-                          color: Colors.white,
-                          size: 18,
-                        ),
-                ),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: ObsidianTheme.headlineSm(color: Colors.white),
-                  ),
-                ),
-                if (!connecting) ...[
-                  const SizedBox(width: 6),
-                  Icon(
-                    active ? Icons.graphic_eq : Icons.bolt,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.token_outlined, size: 14, color: ObsidianTheme.primary),
-            const SizedBox(width: 6),
-            Flexible(
-              child: RichText(
-                textAlign: TextAlign.center,
-                text: TextSpan(
-                  style: ObsidianTheme.bodySm(color: ObsidianTheme.onSurfaceVariant),
-                  children: [
-                    const TextSpan(text: 'El receptor debe ejecutar '),
-                    TextSpan(
-                      text: 'bindcurse_server.py',
-                      style: ObsidianTheme.bodySm(
-                        color: ObsidianTheme.secondary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const TextSpan(text: ' en el puerto indicado.'),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
+    return CurseGlowButton(
+      linkState: service.linkState,
+      onTap: () {
+        if (service.linkState == LinkState.idle) {
+          TopToast.show(
+            context,
+            message:
+                'No olvides ejecutar BindCurse Desktop para que la conexión funcione',
+            icon: Icons.info_outline,
+            color: ObsidianTheme.signalWarning,
+          );
+        }
+        service.toggleStreaming();
+      },
     );
   }
 }

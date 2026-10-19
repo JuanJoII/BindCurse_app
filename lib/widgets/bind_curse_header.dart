@@ -15,7 +15,7 @@ class BindCurseHeader extends StatelessWidget {
         switch (state) {
       LinkState.idle => ('Sin Enlace', ObsidianTheme.secondary, false),
       LinkState.connecting => ('Negociando…', ObsidianTheme.signalWarning, true),
-      LinkState.linked => ('Enlazado UDP', ObsidianTheme.signalOnline, true),
+      LinkState.linked => ('Enlazado', ObsidianTheme.signalOnline, true),
       LinkState.lost => ('Enlace Caído', ObsidianTheme.signalClip, true),
     };
 
@@ -31,54 +31,13 @@ class BindCurseHeader extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Brand Logo & Title
-              Row(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: ObsidianTheme.surfaceContainerHigh,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: ObsidianTheme.primary.withValues(alpha: 0.3),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFFC084FC).withValues(alpha: 0.35),
-                          blurRadius: 15,
-                        ),
-                      ],
-                    ),
-                    child: const Icon(
-                      Icons.auto_fix_high,
-                      color: ObsidianTheme.primary,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'BindCurse',
-                        style: ObsidianTheme.headlineSm(
-                          color: ObsidianTheme.primary,
-                          fontWeight: FontWeight.w600,
-                        ).copyWith(height: 1.0, letterSpacing: 0.5),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'CURSED LINK // UDP',
-                        style: ObsidianTheme.labelSm(
-                          color: ObsidianTheme.secondary,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+              // Brand Title Only
+              Text(
+                'BindCurse',
+                style: ObsidianTheme.headlineSm(
+                  color: ObsidianTheme.primary,
+                  fontWeight: FontWeight.w700,
+                ).copyWith(letterSpacing: 0.5),
               ),
               // Right Status Pill & Flare Button
               Row(

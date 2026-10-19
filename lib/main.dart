@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'screens/advanced_tab.dart';
 import 'screens/connect_tab.dart';
 import 'screens/devices_tab.dart';
 import 'services/udp_audio_service.dart';
@@ -80,6 +81,7 @@ class _BindCurseShellState extends State<BindCurseShell> {
                           setState(() => _selectedIndex = 0);
                         },
                       ),
+                      AdvancedTab(audioService: _audioService),
                     ],
                   ),
                 ),
@@ -123,6 +125,11 @@ class _BindCurseShellState extends State<BindCurseShell> {
                     index: 1,
                     icon: Icons.devices,
                     label: 'Dispositivos',
+                  ),
+                  _buildNavItem(
+                    index: 2,
+                    icon: Icons.settings_suggest_outlined,
+                    label: 'Avanzado',
                   ),
                 ],
               ),
