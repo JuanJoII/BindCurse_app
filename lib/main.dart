@@ -13,7 +13,20 @@ import 'widgets/bind_curse_header.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await SharedPreferences.getInstance();
+  if (BackgroundServiceManager.isSupported) {
+    try {
+      FlutterForegroundTask.initCommunicationPort();
+    } catch (e) {
+      debugPrint('ForegroundTask initCommunicationPort error: $e');
+    }
+  }
+
+  try {
+    await SharedPreferences.getInstance();
+  } catch (e) {
+    debugPrint('SharedPreferences init error: $e');
+  }
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -72,9 +85,8 @@ class _BindCurseShellState extends State<BindCurseShell> {
     return ListenableBuilder(
       listenable: _audioService,
       builder: (context, _) {
-        return WithForegroundTask(
-          child: Scaffold(
-            backgroundColor: ObsidianTheme.surface,
+        final scaffold = Scaffold(
+          backgroundColor: ObsidianTheme.surface,
           body: SafeArea(
             bottom: false,
             child: Column(
@@ -99,10 +111,14 @@ class _BindCurseShellState extends State<BindCurseShell> {
             ),
           ),
           bottomNavigationBar: _buildBottomNavBar(),
-        ),
-      );
-    },
-  );
+        );
+
+        if (BackgroundServiceManager.isSupported) {
+          return WithForegroundTask(child: scaffold);
+        }
+        return scaffold;
+      },
+    );
   }
 
   Widget _buildBottomNavBar() {

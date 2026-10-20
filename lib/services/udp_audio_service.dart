@@ -622,7 +622,9 @@ class UdpAudioService extends ChangeNotifier {
     _captureStarting = true;
     try {
       if (!await _recorder.hasPermission()) {
-        _errorMessage = 'Permiso de micrófono denegado.';
+        if (isStreaming || isConnecting) {
+          _errorMessage = 'Permiso de micrófono denegado.';
+        }
         return false;
       }
       final stream = await _recorder.startStream(

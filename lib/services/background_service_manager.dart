@@ -50,31 +50,34 @@ class BackgroundServiceManager {
     if (!isSupported) return;
 
     if (!_initialized) {
-      FlutterForegroundTask.initCommunicationPort();
-      FlutterForegroundTask.init(
-        androidNotificationOptions: AndroidNotificationOptions(
-          channelId: 'bindcurse_stream_service',
-          channelName: 'BindCurse Transmisión de Audio',
-          channelDescription:
-              'Mantiene la captura del micrófono y envío UDP activo en segundo plano.',
-          channelImportance: NotificationChannelImportance.DEFAULT,
-          priority: NotificationPriority.DEFAULT,
-          onlyAlertOnce: true,
-        ),
-        iosNotificationOptions: const IOSNotificationOptions(
-          showNotification: true,
-          playSound: false,
-        ),
-        foregroundTaskOptions: ForegroundTaskOptions(
-          eventAction: ForegroundTaskEventAction.nothing(),
-          autoRunOnBoot: false,
-          allowWakeLock: true,
-          allowWifiLock: true,
-        ),
-      );
+      try {
+        FlutterForegroundTask.init(
+          androidNotificationOptions: AndroidNotificationOptions(
+            channelId: 'bindcurse_stream_service',
+            channelName: 'BindCurse Transmisión de Audio',
+            channelDescription:
+                'Mantiene la captura del micrófono y envío UDP activo en segundo plano.',
+            channelImportance: NotificationChannelImportance.DEFAULT,
+            priority: NotificationPriority.DEFAULT,
+            onlyAlertOnce: true,
+          ),
+          iosNotificationOptions: const IOSNotificationOptions(
+            showNotification: true,
+            playSound: false,
+          ),
+          foregroundTaskOptions: ForegroundTaskOptions(
+            eventAction: ForegroundTaskEventAction.nothing(),
+            autoRunOnBoot: false,
+            allowWakeLock: true,
+            allowWifiLock: true,
+          ),
+        );
 
-      FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
-      _initialized = true;
+        FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
+        _initialized = true;
+      } catch (e) {
+        debugPrint('Error initializing background service: $e');
+      }
     }
   }
 
@@ -157,6 +160,7 @@ class BackgroundServiceManager {
           serviceId: 256,
           serviceTypes: [
             ForegroundServiceTypes.microphone,
+            ForegroundServiceTypes.dataSync,
           ],
           notificationTitle: title,
           notificationText: text,
