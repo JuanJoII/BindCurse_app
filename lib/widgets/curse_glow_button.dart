@@ -50,13 +50,13 @@ class _CurseGlowButtonState extends State<CurseGlowButton>
   @override
   Widget build(BuildContext context) {
     final state = widget.linkState;
-    final active = state == LinkState.linked || state == LinkState.lost;
+    final active = state == LinkState.linked;
     final connecting = state == LinkState.connecting;
 
     final String label = switch (state) {
       LinkState.idle => 'Curse',
       LinkState.connecting => 'Negociando…',
-      LinkState.linked || LinkState.lost => 'Break Curse',
+      LinkState.linked => 'Break Curse',
     };
 
     final Color fillColor = active ? breakFill : curseFill;

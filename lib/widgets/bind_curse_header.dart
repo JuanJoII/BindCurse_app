@@ -16,7 +16,6 @@ class BindCurseHeader extends StatelessWidget {
       LinkState.idle => ('Sin Enlace', ObsidianTheme.secondary, false),
       LinkState.connecting => ('Negociando…', ObsidianTheme.signalWarning, true),
       LinkState.linked => ('Enlazado', ObsidianTheme.signalOnline, true),
-      LinkState.lost => ('Enlace Caído', ObsidianTheme.signalClip, true),
     };
 
     return ClipRect(

@@ -540,12 +540,9 @@ class _DevicesTabState extends State<DevicesTab> {
     final String statusText;
     final Color statusColor;
     if (active) {
-      statusText = service.linkState == LinkState.lost
-          ? 'Enlace caído'
-          : 'Transmitiendo${service.rttMs != null ? ' · ${service.rttMs} ms' : ''}';
-      statusColor = service.linkState == LinkState.lost
-          ? ObsidianTheme.signalClip
-          : ObsidianTheme.signalOnline;
+      statusText =
+          'Transmitiendo${service.rttMs != null ? ' · ${service.rttMs} ms' : ''}';
+      statusColor = ObsidianTheme.signalOnline;
     } else if (probing) {
       statusText = 'Comprobando…';
       statusColor = ObsidianTheme.signalWarning;

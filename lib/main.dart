@@ -70,13 +70,15 @@ class BindCurseShell extends StatefulWidget {
   State<BindCurseShell> createState() => _BindCurseShellState();
 }
 
-class _BindCurseShellState extends State<BindCurseShell> {
+class _BindCurseShellState extends State<BindCurseShell>
+    with WidgetsBindingObserver {
   late final UdpAudioService _audioService;
   int _selectedIndex = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _audioService = widget.audioService ?? UdpAudioService();
     BackgroundServiceManager.initialize(_audioService);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -85,7 +87,14 @@ class _BindCurseShellState extends State<BindCurseShell> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final inForeground = state == AppLifecycleState.resumed;
+    _audioService.setAppInForeground(inForeground);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     BackgroundServiceManager.dispose();
     _audioService.dispose();
     super.dispose();

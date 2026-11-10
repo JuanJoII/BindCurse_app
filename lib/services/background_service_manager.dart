@@ -33,6 +33,7 @@ class BindCurseTaskHandler extends TaskHandler {
   void onNotificationPressed() {
     // Bring the app to the foreground when notification is tapped
     FlutterForegroundTask.launchApp();
+    FlutterForegroundTask.sendDataToMain('notification_pressed');
   }
 }
 
@@ -86,6 +87,10 @@ class BackgroundServiceManager {
       _audioService?.toggleMute();
     } else if (data == 'btn_disconnect') {
       _audioService?.disconnect();
+    } else if (data == 'btn_dismiss_lost' || data == 'notification_pressed') {
+      if (_audioService?.isStreaming != true) {
+        stopService();
+      }
     }
   }
 
@@ -170,6 +175,47 @@ class BackgroundServiceManager {
       }
     } catch (e) {
       debugPrint('Error starting or updating foreground service: $e');
+    }
+  }
+
+  /// Updates the notification to alert the user when the connection drops while in background.
+  static Future<void> showConnectionLostNotification({
+    required String connectionTarget,
+  }) async {
+    if (!isSupported) return;
+
+    const title = 'BindCurse · Enlace perdido';
+    final text = 'Se interrumpió la conexión con $connectionTarget';
+    const buttons = [
+      NotificationButton(
+        id: 'btn_dismiss_lost',
+        text: 'Cerrar',
+        textColor: ObsidianTheme.signalClip,
+      ),
+    ];
+
+    try {
+      if (await FlutterForegroundTask.isRunningService) {
+        await FlutterForegroundTask.updateService(
+          notificationTitle: title,
+          notificationText: text,
+          notificationButtons: buttons,
+        );
+      } else {
+        await FlutterForegroundTask.startService(
+          serviceId: 256,
+          serviceTypes: [
+            ForegroundServiceTypes.microphone,
+            ForegroundServiceTypes.dataSync,
+          ],
+          notificationTitle: title,
+          notificationText: text,
+          notificationButtons: buttons,
+          callback: startCallback,
+        );
+      }
+    } catch (e) {
+      debugPrint('Error showing connection lost notification: $e');
     }
   }
 

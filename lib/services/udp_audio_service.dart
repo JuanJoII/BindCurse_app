@@ -30,7 +30,7 @@ enum LatencyTarget {
   String get rangeLabel => '$packetMs ms';
 }
 
-enum LinkState { idle, connecting, linked, lost }
+enum LinkState { idle, connecting, linked }
 
 class UdpAudioService extends ChangeNotifier {
   static const int sampleRate = 48000;
@@ -47,6 +47,7 @@ class UdpAudioService extends ChangeNotifier {
   bool _monitorEnabled = false;
   bool _captureStarting = false;
   bool _isMuted = false;
+  bool _isAppInForeground = true;
   bool _disposed = false;
 
   final SpectrumAnalyzer _analyzer = SpectrumAnalyzer(bandCount: barCount);
@@ -106,13 +107,13 @@ class UdpAudioService extends ChangeNotifier {
   bool get isCapturing => _isCapturing;
   bool get monitorEnabled => _monitorEnabled;
   bool get isMuted => _isMuted;
+  bool get isAppInForeground => _isAppInForeground;
   List<double> get spectrumBars => _bars;
   double? get currentDb => _currentDb;
   bool get isClipping => DateTime.now().isBefore(_clipUntil);
 
   LinkState get linkState => _linkState;
-  bool get isStreaming =>
-      _linkState == LinkState.linked || _linkState == LinkState.lost;
+  bool get isStreaming => _linkState == LinkState.linked;
   bool get isConnecting => _linkState == LinkState.connecting;
   ServerInfo? get server => _server;
   int? get rttMs => _rttMs;
@@ -476,6 +477,17 @@ class UdpAudioService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setAppInForeground(bool inForeground) {
+    if (_isAppInForeground == inForeground) return;
+    _isAppInForeground = inForeground;
+    if (!inForeground) {
+      flushPreferences();
+    } else if (!isStreaming) {
+      // Dismiss any lingering background connection-lost alert notification
+      BackgroundServiceManager.stopService();
+    }
+  }
+
   void toggleMute() {
     _isMuted = !_isMuted;
     _syncForegroundService();
@@ -717,16 +729,16 @@ class UdpAudioService extends ChangeNotifier {
           _rttMs = DateTime.now().difference(sentAt).inMilliseconds;
         }
         _lastPongAt = DateTime.now();
-        if (_linkState == LinkState.lost) {
-          _linkState = LinkState.linked;
-          _errorMessage = null;
-          _syncForegroundService();
-        }
         notifyListeners();
         break;
       case BindCurseProtocol.bye:
-        _errorMessage = 'El servidor cerró el enlace.';
-        disconnect(sendBye: false);
+        final targetName = _server != null && _server!.name.isNotEmpty
+            ? _server!.name
+            : (activeAddress ?? _hostInput);
+        _handleUnexpectedDisconnect(
+          'El servidor $targetName cerró el enlace.',
+          targetName: targetName,
+        );
         break;
     }
   }
@@ -738,11 +750,14 @@ class UdpAudioService extends ChangeNotifier {
 
     if (_linkState == LinkState.linked &&
         DateTime.now().difference(_lastPongAt) > BindCurseProtocol.linkTimeout) {
-      _linkState = LinkState.lost;
-      _rttMs = null;
-      _outgoing.clear();
-      _syncForegroundService();
-      notifyListeners();
+      final targetName = _server != null && _server!.name.isNotEmpty
+          ? _server!.name
+          : (activeAddress ?? _hostInput);
+      _handleUnexpectedDisconnect(
+        'Se perdió el enlace con $targetName.',
+        targetName: targetName,
+      );
+      return;
     }
 
     final seq = ++_pingSeq;
@@ -753,7 +768,23 @@ class UdpAudioService extends ChangeNotifier {
     channel.sendText('${BindCurseProtocol.ping}|$seq', address, _targetPort);
   }
 
-  Future<void> disconnect({bool sendBye = true}) async {
+  void _handleUnexpectedDisconnect(
+    String message, {
+    required String targetName,
+  }) {
+    if (_isAppInForeground) {
+      _errorMessage = message;
+      disconnect(sendBye: false);
+    } else {
+      _errorMessage = null;
+      disconnect(sendBye: false, connectionLostTarget: targetName);
+    }
+  }
+
+  Future<void> disconnect({
+    bool sendBye = true,
+    String? connectionLostTarget,
+  }) async {
     _connectToken++;
     _pingTimer?.cancel();
     _pingTimer = null;
@@ -773,7 +804,13 @@ class UdpAudioService extends ChangeNotifier {
     _outgoing.clear();
     _pingsInFlight.clear();
     _linkState = LinkState.idle;
-    _syncForegroundService();
+    if (connectionLostTarget != null && connectionLostTarget.isNotEmpty) {
+      BackgroundServiceManager.showConnectionLostNotification(
+        connectionTarget: connectionLostTarget,
+      );
+    } else {
+      _syncForegroundService();
+    }
 
     if (!_monitorEnabled) await _stopCapture();
     notifyListeners();
