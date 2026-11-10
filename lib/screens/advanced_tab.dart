@@ -248,6 +248,61 @@ class AdvancedTab extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
+          // Selector de Comportamiento del Micrófono con Otras Apps
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: ObsidianTheme.surfaceContainer,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.mic_external_on_outlined,
+                          color: ObsidianTheme.primary,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Actividad con Otras Apps',
+                          style: ObsidianTheme.headlineSm(),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      service.interruptionBehavior.shortLabel,
+                      style: ObsidianTheme.labelSm(
+                        color: ObsidianTheme.signalOnline,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Elige cómo responde el micrófono cuando reproduces audios de WhatsApp, videos o llamadas en el celular.',
+                  style: ObsidianTheme.bodySm(),
+                ),
+                const SizedBox(height: 14),
+                for (var i = 0; i < MicInterruptionBehavior.values.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 8),
+                  _buildInterruptionOption(
+                    service,
+                    MicInterruptionBehavior.values[i],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
           // Métricas de Tráfico de Red (Telemetría en vivo)
           Container(
             padding: const EdgeInsets.all(14),
@@ -371,6 +426,82 @@ class AdvancedTab extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildInterruptionOption(
+    UdpAudioService service,
+    MicInterruptionBehavior behavior,
+  ) {
+    final selected = service.interruptionBehavior == behavior;
+    final icon = behavior == MicInterruptionBehavior.pauseOnOtherAudio
+        ? Icons.pause_circle_outline
+        : Icons.all_inclusive;
+
+    return GestureDetector(
+      onTap: () => service.setInterruptionBehavior(behavior),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: selected
+              ? ObsidianTheme.surfaceContainerHighest
+              : ObsidianTheme.surfaceContainerLowest,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected
+                ? ObsidianTheme.primary.withValues(alpha: 0.45)
+                : Colors.transparent,
+            width: 1.5,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(
+                icon,
+                size: 18,
+                color: selected
+                    ? ObsidianTheme.primary
+                    : ObsidianTheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    behavior.label,
+                    style: ObsidianTheme.labelMd(
+                      color: selected
+                          ? ObsidianTheme.primary
+                          : ObsidianTheme.onSurface,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    behavior.description,
+                    style: ObsidianTheme.labelSm(
+                      color: ObsidianTheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Icon(
+              selected ? Icons.radio_button_checked : Icons.radio_button_off,
+              size: 18,
+              color: selected ? ObsidianTheme.primary : ObsidianTheme.outline,
+            ),
+          ],
+        ),
       ),
     );
   }
