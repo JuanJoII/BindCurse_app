@@ -658,6 +658,7 @@ class _ConnectTabState extends State<ConnectTab> {
               max: 18.0,
               divisions: 84,
               onChanged: service.setGainDb,
+              onChangeEnd: (_) => service.flushPreferences(),
             ),
           ),
           Row(

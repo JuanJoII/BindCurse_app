@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -39,12 +40,14 @@ class UdpAudioService extends ChangeNotifier {
   static const double idleBar = 0.06;
 
   // ---------------------------------------------------------------- capture
-  final AudioRecorder _recorder = AudioRecorder();
+  AudioRecorder? _recorder;
+  AudioRecorder get _audioRecorder => _recorder ??= AudioRecorder();
   StreamSubscription<Uint8List>? _captureSub;
   bool _isCapturing = false;
   bool _monitorEnabled = false;
   bool _captureStarting = false;
   bool _isMuted = false;
+  bool _disposed = false;
 
   final SpectrumAnalyzer _analyzer = SpectrumAnalyzer(bandCount: barCount);
   List<double> _bars = List<double>.filled(barCount, idleBar);
@@ -86,10 +89,18 @@ class UdpAudioService extends ChangeNotifier {
   bool _isScanning = false;
   bool _isPreferencesLoaded = false;
   final Completer<void> _prefsCompleter = Completer<void>();
+  final Set<String> _dirtyBeforeLoad = {};
+  final File? _customStorageFile;
+  File? _resolvedStorageFile;
+  Timer? _saveDebounceTimer;
+  Future<void> _saveChain = Future<void>.value();
 
-  UdpAudioService() {
+  UdpAudioService({File? storageFile}) : _customStorageFile = storageFile {
     _loadPreferences();
   }
+
+  /// Waits until initial persisted preferences and devices have finished loading.
+  Future<void> init() => _prefsCompleter.future;
 
   // ---------------------------------------------------------------- getters
   bool get isCapturing => _isCapturing;
@@ -130,100 +141,197 @@ class UdpAudioService extends ChangeNotifier {
       _targetPort == d.port;
 
   // ------------------------------------------------------------ persistence
-  Future<void> _loadPreferences() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
+  Future<File?> _resolveStorageFile() async {
+    if (_customStorageFile != null) return _customStorageFile;
+    if (_resolvedStorageFile != null) return _resolvedStorageFile;
 
-      // Check legacy 'linked_devices' if saved_hosts_v2 is missing
-      var devicesJson = prefs.getString('saved_hosts_v2');
-      if (devicesJson == null || devicesJson.isEmpty) {
-        final legacyJson = prefs.getString('linked_devices');
-        if (legacyJson != null && legacyJson.isNotEmpty) {
-          devicesJson = legacyJson;
+    try {
+      final dir = await getApplicationSupportDirectory();
+      _resolvedStorageFile = File('${dir.path}/bindcurse_state_v2.json');
+      return _resolvedStorageFile;
+    } catch (_) {
+      // Fallback for Android release if platform channel is ever unavailable
+      if (!kIsWeb && Platform.isAndroid) {
+        for (final candidateDir in const [
+          '/data/user/0/com.example.bind_curse_app/files',
+          '/data/data/com.example.bind_curse_app/files',
+          '/data/user/0/com.example.bind_curse_app/app_flutter',
+        ]) {
+          try {
+            final dir = Directory(candidateDir);
+            if (dir.existsSync()) {
+              _resolvedStorageFile =
+                  File('${dir.path}/bindcurse_state_v2.json');
+              return _resolvedStorageFile;
+            }
+          } catch (_) {}
         }
       }
+      return null;
+    }
+  }
 
-      // Check legacy last sealed info if last_link_v2 is missing
-      final lastJson = prefs.getString('last_link_v2');
-      LinkedDevice? legacyLastLink;
-      if (lastJson == null || lastJson.isEmpty) {
-        final legacyIp = prefs.getString('last_sealed_ip');
-        final legacyPort = prefs.getInt('last_sealed_port');
-        final legacyName = prefs.getString('last_sealed_name');
-        if (legacyIp != null && legacyIp.isNotEmpty) {
-          legacyLastLink = LinkedDevice(
-            id: DateTime.now().microsecondsSinceEpoch.toString(),
-            name: (legacyName != null && legacyName.isNotEmpty) ? legacyName : legacyIp,
-            ip: legacyIp,
-            port: legacyPort ?? BindCurseProtocol.defaultPort,
-          );
+  List<LinkedDevice>? _parseDevicesPayload(Object? raw) {
+    if (raw == null) return null;
+    try {
+      final decoded = raw is String ? jsonDecode(raw) : raw;
+      if (decoded is List) {
+        final loaded = <LinkedDevice>[];
+        for (final item in decoded) {
+          try {
+            if (item is Map) {
+              loaded.add(
+                LinkedDevice.fromJson(Map<String, dynamic>.from(item)),
+              );
+            }
+          } catch (e) {
+            debugPrint('BindCurse: error parsing device: $e');
+          }
+        }
+        return loaded;
+      }
+    } catch (e) {
+      debugPrint('BindCurse: error decoding devices JSON: $e');
+    }
+    return null;
+  }
+
+  LinkedDevice? _parseLastLinkPayload(Object? raw) {
+    if (raw == null) return null;
+    try {
+      if (raw is String && raw.isEmpty) return null;
+      final decoded = raw is String ? jsonDecode(raw) : raw;
+      if (decoded is Map) {
+        return LinkedDevice.fromJson(Map<String, dynamic>.from(decoded));
+      }
+    } catch (e) {
+      debugPrint('BindCurse: error decoding last link JSON: $e');
+    }
+    return null;
+  }
+
+  Future<void> _loadPreferences() async {
+    var migratedOrRecovered = false;
+    try {
+      Map<String, dynamic>? fileMap;
+      try {
+        final file = await _resolveStorageFile();
+        if (file != null && await file.exists()) {
+          final content = await file.readAsString();
+          if (content.trim().isNotEmpty) {
+            final decoded = jsonDecode(content);
+            if (decoded is Map) {
+              fileMap = Map<String, dynamic>.from(decoded);
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('BindCurse: error reading storage file: $e');
+      }
+
+      SharedPreferences? prefs;
+      try {
+        prefs = await SharedPreferences.getInstance();
+      } catch (e) {
+        debugPrint('BindCurse: error opening SharedPreferences: $e');
+      }
+
+      // Resolve devices from file first, then SharedPreferences (v2 -> legacy)
+      var loadedDevices = _parseDevicesPayload(fileMap?['saved_hosts_v2']);
+      if (loadedDevices == null || loadedDevices.isEmpty) {
+        var devicesJson = prefs?.getString('saved_hosts_v2');
+        if (devicesJson == null || devicesJson.isEmpty) {
+          final legacyJson = prefs?.getString('linked_devices');
+          if (legacyJson != null && legacyJson.isNotEmpty) {
+            devicesJson = legacyJson;
+            migratedOrRecovered = true;
+          }
+        } else if (fileMap == null) {
+          migratedOrRecovered = true;
+        }
+        loadedDevices = _parseDevicesPayload(devicesJson);
+      }
+
+      // Resolve lastLink from file first, then SharedPreferences (v2 -> legacy)
+      var loadedLastLink = _parseLastLinkPayload(fileMap?['last_link_v2']);
+      if (loadedLastLink == null) {
+        final lastJson = prefs?.getString('last_link_v2');
+        if (lastJson != null && lastJson.isNotEmpty) {
+          loadedLastLink = _parseLastLinkPayload(lastJson);
+        } else if (prefs != null) {
+          final legacyIp = prefs.getString('last_sealed_ip');
+          final legacyPort = prefs.getInt('last_sealed_port');
+          final legacyName = prefs.getString('last_sealed_name');
+          if (legacyIp != null && legacyIp.isNotEmpty) {
+            loadedLastLink = LinkedDevice(
+              id: DateTime.now().microsecondsSinceEpoch.toString(),
+              name: (legacyName != null && legacyName.isNotEmpty)
+                  ? legacyName
+                  : legacyIp,
+              ip: legacyIp,
+              port: legacyPort ?? BindCurseProtocol.defaultPort,
+            );
+            migratedOrRecovered = true;
+          }
         }
       }
 
       // Drop obsolete keys now that we've checked for any migration
-      for (final key in const [
-        'linked_devices',
-        'last_sealed_name',
-        'last_sealed_ip',
-        'last_sealed_port',
-      ]) {
-        await prefs.remove(key);
-      }
-
-      _hostInput = prefs.getString('host_ip_v2') ?? _hostInput;
-      final savedPort = prefs.getInt('host_port_v2');
-      if (savedPort == null || savedPort == 9920) {
-        _port = BindCurseProtocol.defaultPort;
-      } else {
-        _port = savedPort;
-      }
-      _gainDb = prefs.getDouble('gain_db_v2') ?? _gainDb;
-      final latency = prefs.getString('latency_v2');
-      if (latency != null) {
-        _latencyTarget = LatencyTarget.values.firstWhere(
-          (l) => l.name == latency,
-          orElse: () => _latencyTarget,
-        );
-      }
-
-      if (devicesJson != null && devicesJson.isNotEmpty) {
-        try {
-          final decoded = jsonDecode(devicesJson);
-          if (decoded is List) {
-            final loaded = <LinkedDevice>[];
-            for (final item in decoded) {
-              try {
-                if (item is Map) {
-                  loaded.add(
-                    LinkedDevice.fromJson(Map<String, dynamic>.from(item)),
-                  );
-                }
-              } catch (e) {
-                debugPrint('BindCurse: error parsing device: $e');
-              }
-            }
-            if (loaded.isNotEmpty) {
-              _devices = loaded;
-            }
-          }
-        } catch (e) {
-          debugPrint('BindCurse: error decoding devices JSON: $e');
+      if (prefs != null) {
+        for (final key in const [
+          'linked_devices',
+          'last_sealed_name',
+          'last_sealed_ip',
+          'last_sealed_port',
+        ]) {
+          await prefs.remove(key);
         }
       }
 
-      if (lastJson != null && lastJson.isNotEmpty) {
-        try {
-          final decoded = jsonDecode(lastJson);
-          if (decoded is Map) {
-            _lastLink = LinkedDevice.fromJson(
-              Map<String, dynamic>.from(decoded),
-            );
-          }
-        } catch (e) {
-          debugPrint('BindCurse: error decoding last link JSON: $e');
+      if (!_dirtyBeforeLoad.contains('host')) {
+        final savedHost = fileMap?['host_ip_v2'] as String? ??
+            prefs?.getString('host_ip_v2');
+        if (savedHost != null) {
+          _hostInput = savedHost;
         }
-      } else if (legacyLastLink != null) {
-        _lastLink = legacyLastLink;
+      }
+
+      if (!_dirtyBeforeLoad.contains('port')) {
+        final savedPort = (fileMap?['host_port_v2'] as num?)?.toInt() ??
+            prefs?.getInt('host_port_v2');
+        if (savedPort == null || savedPort == 9920) {
+          _port = BindCurseProtocol.defaultPort;
+        } else {
+          _port = savedPort;
+        }
+      }
+
+      if (!_dirtyBeforeLoad.contains('gain')) {
+        final savedGain = (fileMap?['gain_db_v2'] as num?)?.toDouble() ??
+            prefs?.getDouble('gain_db_v2');
+        if (savedGain != null) {
+          _gainDb = savedGain.clamp(-24.0, 18.0);
+        }
+      }
+
+      if (!_dirtyBeforeLoad.contains('latency')) {
+        final latency = fileMap?['latency_v2'] as String? ??
+            prefs?.getString('latency_v2');
+        if (latency != null) {
+          _latencyTarget = LatencyTarget.values.firstWhere(
+            (l) => l.name == latency,
+            orElse: () => _latencyTarget,
+          );
+        }
+      }
+
+      if (!_dirtyBeforeLoad.contains('devices')) {
+        if (loadedDevices != null && loadedDevices.isNotEmpty) {
+          _devices = loadedDevices;
+        }
+        if (loadedLastLink != null) {
+          _lastLink = loadedLastLink;
+        }
       }
 
       // Fallback: if no lastLink was persisted but we have saved devices, use the first one
@@ -233,8 +341,12 @@ class UdpAudioService extends ChangeNotifier {
 
       // If hostInput is empty and we have a lastLink, populate hostInput and port
       if (_hostInput.isEmpty && _lastLink != null) {
-        _hostInput = _lastLink!.ip;
-        _port = _lastLink!.port;
+        if (!_dirtyBeforeLoad.contains('host')) {
+          _hostInput = _lastLink!.ip;
+        }
+        if (!_dirtyBeforeLoad.contains('port')) {
+          _port = _lastLink!.port;
+        }
       }
     } catch (e) {
       debugPrint('BindCurse: error loading preferences: $e');
@@ -243,6 +355,10 @@ class UdpAudioService extends ChangeNotifier {
       if (!_prefsCompleter.isCompleted) {
         _prefsCompleter.complete();
       }
+      if (migratedOrRecovered || _dirtyBeforeLoad.isNotEmpty) {
+        _dirtyBeforeLoad.clear();
+        _savePreferences();
+      }
       // Activar micrófono de inmediato por defecto para mostrar el espectro visual
       _monitorEnabled = true;
       _startCapture();
@@ -250,22 +366,71 @@ class UdpAudioService extends ChangeNotifier {
     }
   }
 
-  Future<void> _savePreferences() async {
+  Future<void> flushPreferences() async {
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = null;
+    await _savePreferences(debounced: false);
+  }
+
+  Future<void> _savePreferences({bool debounced = false}) {
+    if (debounced) {
+      _saveDebounceTimer?.cancel();
+      final completer = Completer<void>();
+      _saveDebounceTimer = Timer(const Duration(milliseconds: 150), () {
+        _saveDebounceTimer = null;
+        _savePreferences(debounced: false).then((_) {
+          if (!completer.isCompleted) completer.complete();
+        });
+      });
+      return completer.future;
+    }
+
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = null;
+
+    _saveChain = _saveChain.then((_) => _performSave()).catchError((Object e) {
+      debugPrint('BindCurse: error in save chain: $e');
+    });
+    return _saveChain;
+  }
+
+  Future<void> _performSave() async {
     if (!_isPreferencesLoaded) {
       await _prefsCompleter.future;
     }
+
+    final devicesList = _devices.map((d) => d.toJson()).toList();
+    final lastLinkMap = _lastLink?.toJson();
+    final stateMap = <String, dynamic>{
+      'host_ip_v2': _hostInput,
+      'host_port_v2': _port,
+      'gain_db_v2': _gainDb,
+      'latency_v2': _latencyTarget.name,
+      'saved_hosts_v2': devicesList,
+      'last_link_v2': lastLinkMap,
+    };
+
+    // 1. Primary native file storage (immune to R8 / plugin channel stripping)
+    try {
+      final file = await _resolveStorageFile();
+      if (file != null) {
+        await file.parent.create(recursive: true);
+        await file.writeAsString(jsonEncode(stateMap), flush: true);
+      }
+    } catch (e) {
+      debugPrint('BindCurse: error saving storage file: $e');
+    }
+
+    // 2. Secondary SharedPreferences storage
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('host_ip_v2', _hostInput);
       await prefs.setInt('host_port_v2', _port);
       await prefs.setDouble('gain_db_v2', _gainDb);
       await prefs.setString('latency_v2', _latencyTarget.name);
-      await prefs.setString(
-        'saved_hosts_v2',
-        jsonEncode(_devices.map((d) => d.toJson()).toList()),
-      );
-      if (_lastLink != null) {
-        await prefs.setString('last_link_v2', jsonEncode(_lastLink!.toJson()));
+      await prefs.setString('saved_hosts_v2', jsonEncode(devicesList));
+      if (lastLinkMap != null) {
+        await prefs.setString('last_link_v2', jsonEncode(lastLinkMap));
       } else {
         await prefs.remove('last_link_v2');
       }
@@ -276,6 +441,7 @@ class UdpAudioService extends ChangeNotifier {
 
   // --------------------------------------------------------------- settings
   void setHostIp(String value) {
+    if (!_isPreferencesLoaded) _dirtyBeforeLoad.add('host');
     _hostInput = value.trim();
     _errorMessage = null;
     _savePreferences();
@@ -284,6 +450,7 @@ class UdpAudioService extends ChangeNotifier {
 
   void setPort(int value) {
     if (value <= 0 || value > 65535) return;
+    if (!_isPreferencesLoaded) _dirtyBeforeLoad.add('port');
     _port = value;
     _errorMessage = null;
     _savePreferences();
@@ -291,12 +458,14 @@ class UdpAudioService extends ChangeNotifier {
   }
 
   void setGainDb(double db) {
+    if (!_isPreferencesLoaded) _dirtyBeforeLoad.add('gain');
     _gainDb = db.clamp(-24.0, 18.0);
-    _savePreferences();
+    _savePreferences(debounced: true);
     notifyListeners();
   }
 
   void setLatencyTarget(LatencyTarget target) {
+    if (!_isPreferencesLoaded) _dirtyBeforeLoad.add('latency');
     _latencyTarget = target;
     _savePreferences();
     notifyListeners();
@@ -612,22 +781,25 @@ class UdpAudioService extends ChangeNotifier {
 
   // ---------------------------------------------------------------- capture
   Future<bool> _startCapture() async {
+    if (_disposed) return false;
     if (_isCapturing) return true;
     if (_captureStarting) {
-      while (_captureStarting) {
+      while (_captureStarting && !_disposed) {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
       return _isCapturing;
     }
     _captureStarting = true;
     try {
-      if (!await _recorder.hasPermission()) {
+      final recorder = _audioRecorder;
+      if (!await recorder.hasPermission()) {
         if (isStreaming || isConnecting) {
           _errorMessage = 'Permiso de micrófono denegado.';
         }
         return false;
       }
-      final stream = await _recorder.startStream(
+      if (_disposed) return false;
+      final stream = await recorder.startStream(
         const RecordConfig(
           encoder: AudioEncoder.pcm16bits,
           sampleRate: sampleRate,
@@ -664,7 +836,9 @@ class UdpAudioService extends ChangeNotifier {
     await _captureSub?.cancel();
     _captureSub = null;
     try {
-      if (await _recorder.isRecording()) await _recorder.stop();
+      if (_recorder != null && await _recorder!.isRecording()) {
+        await _recorder!.stop();
+      }
     } catch (_) {}
     _isCapturing = false;
     _currentDb = null;
@@ -904,6 +1078,7 @@ class UdpAudioService extends ChangeNotifier {
     required int port,
     String? os,
   }) {
+    if (!_isPreferencesLoaded) _dirtyBeforeLoad.add('devices');
     final trimmedIp = ip.trim();
     final trimmedName = name.trim().isEmpty ? trimmedIp : name.trim();
     final existing =
@@ -944,6 +1119,7 @@ class UdpAudioService extends ChangeNotifier {
 
   void renameDevice(String id, String newName) {
     if (newName.trim().isEmpty) return;
+    if (!_isPreferencesLoaded) _dirtyBeforeLoad.add('devices');
     _devices = [
       for (final d in _devices) d.id == id ? d.copyWith(name: newName.trim()) : d,
     ];
@@ -953,6 +1129,7 @@ class UdpAudioService extends ChangeNotifier {
   }
 
   void updateDeviceAddress(String id, String newIp, int newPort) {
+    if (!_isPreferencesLoaded) _dirtyBeforeLoad.add('devices');
     _devices = [
       for (final d in _devices)
         d.id == id ? d.copyWith(ip: newIp.trim(), port: newPort) : d,
@@ -968,6 +1145,7 @@ class UdpAudioService extends ChangeNotifier {
   }
 
   void removeDevice(String id) {
+    if (!_isPreferencesLoaded) _dirtyBeforeLoad.add('devices');
     _devices = _devices.where((d) => d.id != id).toList();
     _probes.remove(id);
     if (_lastLink?.id == id) {
@@ -978,7 +1156,19 @@ class UdpAudioService extends ChangeNotifier {
   }
 
   @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
+    if (_saveDebounceTimer?.isActive ?? false) {
+      _saveDebounceTimer?.cancel();
+      _saveDebounceTimer = null;
+      _savePreferences(debounced: false);
+    }
     _pingTimer?.cancel();
     _sessionSub?.cancel();
     if (_channel != null && _targetAddress != null) {
@@ -987,7 +1177,7 @@ class UdpAudioService extends ChangeNotifier {
     _channel?.close();
     _captureSub?.cancel();
     try {
-      _recorder.dispose().catchError((_) {});
+      _recorder?.dispose().catchError((_) {});
     } catch (_) {}
     try {
       BackgroundServiceManager.stopService();

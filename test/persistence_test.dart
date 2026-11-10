@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bind_curse_app/models/linked_device.dart';
@@ -6,6 +8,17 @@ import 'package:bind_curse_app/services/udp_audio_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUpAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('com.llfbandit.record/messages'),
+      (MethodCall methodCall) async {
+        if (methodCall.method == 'hasPermission') return false;
+        return null;
+      },
+    );
+  });
 
   group('LinkedDevice JSON robustness', () {
     test('parses int, string and num ports reliably', () {
@@ -147,6 +160,41 @@ void main() {
       expect(service.devices.first.ip, '192.168.1.77');
       expect(service.gainDb, 3.0);
       service.dispose();
+    });
+
+    test('persists and reloads devices and audio calibration via native JSON file', () async {
+      final tempDir = await Directory.systemTemp.createTemp('bindcurse_test_');
+      final storageFile = File('${tempDir.path}/bindcurse_state_v2.json');
+
+      try {
+        SharedPreferences.setMockInitialValues({});
+        final writer = UdpAudioService(storageFile: storageFile);
+        await writer.init();
+
+        writer.addDevice(name: 'Studio Rig', ip: '192.168.1.200', port: 5005);
+        writer.setGainDb(6.5);
+        writer.setLatencyTarget(LatencyTarget.ultraLow);
+        await writer.flushPreferences();
+        writer.dispose();
+
+        expect(await storageFile.exists(), isTrue);
+
+        // Simulate SharedPreferences being completely wiped/unavailable in release
+        SharedPreferences.setMockInitialValues({});
+        final reader = UdpAudioService(storageFile: storageFile);
+        await reader.init();
+
+        expect(reader.devices.length, 1);
+        expect(reader.devices.first.name, 'Studio Rig');
+        expect(reader.devices.first.ip, '192.168.1.200');
+        expect(reader.gainDb, 6.5);
+        expect(reader.latencyTarget, LatencyTarget.ultraLow);
+        reader.dispose();
+      } finally {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      }
     });
   });
 }

@@ -27,6 +27,13 @@ void main() async {
     debugPrint('SharedPreferences init error: $e');
   }
 
+  final audioService = UdpAudioService();
+  try {
+    await audioService.init().timeout(const Duration(seconds: 2));
+  } catch (e) {
+    debugPrint('AudioService init timeout/error: $e');
+  }
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -35,11 +42,13 @@ void main() async {
       systemNavigationBarIconBrightness: Brightness.light,
     ),
   );
-  runApp(const BindCurseApp());
+  runApp(BindCurseApp(audioService: audioService));
 }
 
 class BindCurseApp extends StatelessWidget {
-  const BindCurseApp({super.key});
+  final UdpAudioService? audioService;
+
+  const BindCurseApp({super.key, this.audioService});
 
   @override
   Widget build(BuildContext context) {
@@ -47,13 +56,15 @@ class BindCurseApp extends StatelessWidget {
       title: 'BindCurse',
       debugShowCheckedModeBanner: false,
       theme: ObsidianTheme.themeData,
-      home: const BindCurseShell(),
+      home: BindCurseShell(audioService: audioService),
     );
   }
 }
 
 class BindCurseShell extends StatefulWidget {
-  const BindCurseShell({super.key});
+  final UdpAudioService? audioService;
+
+  const BindCurseShell({super.key, this.audioService});
 
   @override
   State<BindCurseShell> createState() => _BindCurseShellState();
@@ -66,7 +77,7 @@ class _BindCurseShellState extends State<BindCurseShell> {
   @override
   void initState() {
     super.initState();
-    _audioService = UdpAudioService();
+    _audioService = widget.audioService ?? UdpAudioService();
     BackgroundServiceManager.initialize(_audioService);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       BackgroundServiceManager.requestPermissions();
