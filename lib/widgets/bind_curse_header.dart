@@ -14,7 +14,7 @@ class BindCurseHeader extends StatelessWidget {
     final (String statusLabel, Color statusColor, bool highlighted) =
         switch (state) {
       LinkState.idle => ('Sin Enlace', ObsidianTheme.secondary, false),
-      LinkState.connecting => ('Negociando…', ObsidianTheme.signalWarning, true),
+      LinkState.connecting => ('Enlazando…', ObsidianTheme.signalWarning, true),
       LinkState.linked => ('Enlazado', ObsidianTheme.signalOnline, true),
     };
 

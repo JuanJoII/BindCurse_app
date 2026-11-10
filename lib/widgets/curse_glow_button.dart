@@ -55,7 +55,7 @@ class _CurseGlowButtonState extends State<CurseGlowButton>
 
     final String label = switch (state) {
       LinkState.idle => 'Curse',
-      LinkState.connecting => 'Negociando…',
+      LinkState.connecting => 'Enlazando…',
       LinkState.linked => 'Break Curse',
     };
 

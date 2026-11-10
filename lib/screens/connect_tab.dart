@@ -135,7 +135,7 @@ class _ConnectTabState extends State<ConnectTab> {
 
     final (String title, Color titleColor) = switch (state) {
       LinkState.linked => ('TRANSMITIENDO', ObsidianTheme.signalOnline),
-      LinkState.connecting => ('NEGOCIANDO ENLACE', ObsidianTheme.signalWarning),
+      LinkState.connecting => ('ENLAZANDO…', ObsidianTheme.signalWarning),
       LinkState.idle => capturing
           ? ('MONITOR DE MICRÓFONO', ObsidianTheme.primary)
           : ('MICRÓFONO INACTIVO', ObsidianTheme.onSurfaceVariant),
