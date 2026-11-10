@@ -4,5 +4,11 @@
 # Record plugin rules
 -keep class com.llfbandit.record.** { *; }
 
-# Shared preferences
+# Shared preferences & Jetpack DataStore rules
 -keep class io.flutter.plugins.sharedpreferences.** { *; }
+-keep class io.flutter.plugins.pathprovider.** { *; }
+-keep class androidx.datastore.** { *; }
+-keep class * extends androidx.datastore.preferences.protobuf.GeneratedMessageLite { *; }
+-keepclassmembers class * extends androidx.datastore.preferences.protobuf.GeneratedMessageLite { *; }
+-dontwarn javax.annotation.**
+-dontwarn kotlinx.coroutines.**
