@@ -30,6 +30,33 @@ enum LatencyTarget {
   String get rangeLabel => '$packetMs ms';
 }
 
+/// Defines how the microphone behaves when another app on the phone requests audio focus
+/// (e.g. playing WhatsApp voice notes, watching videos, or phone calls).
+enum MicInterruptionBehavior {
+  pauseOnOtherAudio(
+    label: 'Pausar con otras apps',
+    shortLabel: 'Auto-Pausa',
+    description:
+        'Pausa la transmisión si escuchas audios, videos o entras en llamada y reanuda al terminar.',
+  ),
+  alwaysActive(
+    label: 'Nunca interrumpir',
+    shortLabel: 'Siempre Activo',
+    description:
+        'Mantiene el micrófono activo aunque reproduzcas audios o videos en los altavoces del celular.',
+  );
+
+  final String label;
+  final String shortLabel;
+  final String description;
+
+  const MicInterruptionBehavior({
+    required this.label,
+    required this.shortLabel,
+    required this.description,
+  });
+}
+
 enum LinkState { idle, connecting, linked }
 
 class UdpAudioService extends ChangeNotifier {
@@ -43,10 +70,12 @@ class UdpAudioService extends ChangeNotifier {
   AudioRecorder? _recorder;
   AudioRecorder get _audioRecorder => _recorder ??= AudioRecorder();
   StreamSubscription<Uint8List>? _captureSub;
+  StreamSubscription<RecordState>? _recorderStateSub;
   bool _isCapturing = false;
   bool _monitorEnabled = false;
   bool _captureStarting = false;
   bool _isMuted = false;
+  bool _isInterrupted = false;
   bool _isAppInForeground = true;
   bool _disposed = false;
 
@@ -79,6 +108,8 @@ class UdpAudioService extends ChangeNotifier {
   int _port = BindCurseProtocol.defaultPort;
   double _gainDb = 0.0;
   LatencyTarget _latencyTarget = LatencyTarget.studio;
+  MicInterruptionBehavior _interruptionBehavior =
+      MicInterruptionBehavior.pauseOnOtherAudio;
   String? _errorMessage;
 
   // ---------------------------------------------------------------- devices
@@ -107,6 +138,7 @@ class UdpAudioService extends ChangeNotifier {
   bool get isCapturing => _isCapturing;
   bool get monitorEnabled => _monitorEnabled;
   bool get isMuted => _isMuted;
+  bool get isInterrupted => _isInterrupted;
   bool get isAppInForeground => _isAppInForeground;
   List<double> get spectrumBars => _bars;
   double? get currentDb => _currentDb;
@@ -127,6 +159,7 @@ class UdpAudioService extends ChangeNotifier {
   int get port => _port;
   double get gainDb => _gainDb;
   LatencyTarget get latencyTarget => _latencyTarget;
+  MicInterruptionBehavior get interruptionBehavior => _interruptionBehavior;
   String? get errorMessage => _errorMessage;
 
   List<LinkedDevice> get devices => List.unmodifiable(_devices);
@@ -326,6 +359,17 @@ class UdpAudioService extends ChangeNotifier {
         }
       }
 
+      if (!_dirtyBeforeLoad.contains('interruption')) {
+        final interruption = fileMap?['mic_interruption_v2'] as String? ??
+            prefs?.getString('mic_interruption_v2');
+        if (interruption != null) {
+          _interruptionBehavior = MicInterruptionBehavior.values.firstWhere(
+            (b) => b.name == interruption,
+            orElse: () => _interruptionBehavior,
+          );
+        }
+      }
+
       if (!_dirtyBeforeLoad.contains('devices')) {
         if (loadedDevices != null && loadedDevices.isNotEmpty) {
           _devices = loadedDevices;
@@ -407,6 +451,7 @@ class UdpAudioService extends ChangeNotifier {
       'host_port_v2': _port,
       'gain_db_v2': _gainDb,
       'latency_v2': _latencyTarget.name,
+      'mic_interruption_v2': _interruptionBehavior.name,
       'saved_hosts_v2': devicesList,
       'last_link_v2': lastLinkMap,
     };
@@ -429,6 +474,7 @@ class UdpAudioService extends ChangeNotifier {
       await prefs.setInt('host_port_v2', _port);
       await prefs.setDouble('gain_db_v2', _gainDb);
       await prefs.setString('latency_v2', _latencyTarget.name);
+      await prefs.setString('mic_interruption_v2', _interruptionBehavior.name);
       await prefs.setString('saved_hosts_v2', jsonEncode(devicesList));
       if (lastLinkMap != null) {
         await prefs.setString('last_link_v2', jsonEncode(lastLinkMap));
@@ -472,6 +518,19 @@ class UdpAudioService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setInterruptionBehavior(MicInterruptionBehavior behavior) async {
+    if (_interruptionBehavior == behavior) return;
+    if (!_isPreferencesLoaded) _dirtyBeforeLoad.add('interruption');
+    _interruptionBehavior = behavior;
+    _isInterrupted = false;
+    _savePreferences();
+    notifyListeners();
+
+    if (_isCapturing || _monitorEnabled || isStreaming) {
+      await _restartCapture();
+    }
+  }
+
   void clearError() {
     _errorMessage = null;
     notifyListeners();
@@ -482,13 +541,37 @@ class UdpAudioService extends ChangeNotifier {
     _isAppInForeground = inForeground;
     if (!inForeground) {
       flushPreferences();
-    } else if (!isStreaming) {
-      // Dismiss any lingering background connection-lost alert notification
-      BackgroundServiceManager.stopService();
+    } else {
+      if (!isStreaming) {
+        // Dismiss any lingering background connection-lost alert notification
+        BackgroundServiceManager.stopService();
+      }
+      // If another app caused a permanent AudioFocus loss while in background,
+      // automatically resume the microphone when returning to BindCurse.
+      if (_isInterrupted && (_isCapturing || _monitorEnabled || isStreaming)) {
+        resumeAfterInterruption();
+      }
+    }
+  }
+
+  Future<void> resumeAfterInterruption() async {
+    try {
+      if (_recorder != null) {
+        await _recorder!.resume();
+      }
+      _isInterrupted = false;
+      _syncForegroundService();
+      notifyListeners();
+    } catch (_) {
+      await _restartCapture();
     }
   }
 
   void toggleMute() {
+    if (_isInterrupted) {
+      resumeAfterInterruption();
+      return;
+    }
     _isMuted = !_isMuted;
     _syncForegroundService();
     notifyListeners();
@@ -509,7 +592,7 @@ class UdpAudioService extends ChangeNotifier {
 
     BackgroundServiceManager.syncServiceState(
       isStreaming: isStreaming,
-      isMuted: _isMuted,
+      isMuted: _isMuted || _isInterrupted,
       connectionTarget: target,
     );
   }
@@ -836,19 +919,36 @@ class UdpAudioService extends ChangeNotifier {
         return false;
       }
       if (_disposed) return false;
+      final interruptionMode =
+          _interruptionBehavior == MicInterruptionBehavior.alwaysActive
+              ? AudioInterruptionMode.none
+              : AudioInterruptionMode.pauseResume;
+
+      _ensureRecorderStateListener(recorder);
+
       final stream = await recorder.startStream(
-        const RecordConfig(
+        RecordConfig(
           encoder: AudioEncoder.pcm16bits,
           sampleRate: sampleRate,
           numChannels: numChannels,
           autoGain: false,
           echoCancel: false,
           noiseSuppress: false,
+          audioInterruption: interruptionMode,
+          iosConfig: const IosRecordConfig(
+            categoryOptions: [
+              IosAudioCategoryOption.mixWithOthers,
+              IosAudioCategoryOption.defaultToSpeaker,
+              IosAudioCategoryOption.allowBluetooth,
+              IosAudioCategoryOption.allowBluetoothA2DP,
+            ],
+          ),
         ),
       );
       _analyzer.reset();
       _bars = List<double>.filled(barCount, idleBar);
       _currentDb = -60.0;
+      _isInterrupted = false;
       _captureSub = stream.listen(
         _onPcmChunk,
         onError: (Object e) {
@@ -869,6 +969,43 @@ class UdpAudioService extends ChangeNotifier {
     }
   }
 
+  void _ensureRecorderStateListener(AudioRecorder recorder) {
+    if (_recorderStateSub != null) return;
+    try {
+      _recorderStateSub = recorder.onStateChanged().listen(
+        (RecordState state) {
+          if (_disposed) return;
+          if (state == RecordState.pause) {
+            if (_interruptionBehavior == MicInterruptionBehavior.alwaysActive) {
+              // Never allow another app to pause our microphone stream
+              recorder.resume().catchError((_) {});
+            } else {
+              _isInterrupted = true;
+              _currentDb = -60.0;
+              _bars = List<double>.filled(barCount, idleBar);
+              _syncForegroundService();
+              notifyListeners();
+            }
+          } else if (state == RecordState.record) {
+            if (_isInterrupted) {
+              _isInterrupted = false;
+              _syncForegroundService();
+              notifyListeners();
+            }
+          }
+        },
+        onError: (_) {},
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _restartCapture() async {
+    await _stopCapture();
+    if (!_disposed && (_monitorEnabled || isStreaming)) {
+      await _startCapture();
+    }
+  }
+
   Future<void> _stopCapture() async {
     await _captureSub?.cancel();
     _captureSub = null;
@@ -878,6 +1015,7 @@ class UdpAudioService extends ChangeNotifier {
       }
     } catch (_) {}
     _isCapturing = false;
+    _isInterrupted = false;
     _currentDb = null;
     _bars = List<double>.filled(barCount, idleBar);
   }
@@ -1213,6 +1351,7 @@ class UdpAudioService extends ChangeNotifier {
     }
     _channel?.close();
     _captureSub?.cancel();
+    _recorderStateSub?.cancel();
     try {
       _recorder?.dispose().catchError((_) {});
     } catch (_) {}

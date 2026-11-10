@@ -140,6 +140,10 @@ class _ConnectTabState extends State<ConnectTab> {
           ? ('MONITOR DE MICRÓFONO', ObsidianTheme.primary)
           : ('MICRÓFONO INACTIVO', ObsidianTheme.onSurfaceVariant),
     };
+    final pausedOrMuted = service.isMuted || service.isInterrupted;
+    final statusBadgeText = service.isInterrupted
+        ? 'PAUSADO POR OTRA APP'
+        : (service.isMuted ? 'SILENCIADO' : title);
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -190,14 +194,14 @@ class _ConnectTabState extends State<ConnectTab> {
                     width: 10,
                     height: 10,
                     decoration: BoxDecoration(
-                      color: service.isMuted
+                      color: pausedOrMuted
                           ? ObsidianTheme.signalClip
                           : titleColor,
                       shape: BoxShape.circle,
                       boxShadow: capturing
                           ? [
                               BoxShadow(
-                                color: service.isMuted
+                                color: pausedOrMuted
                                     ? ObsidianTheme.signalClip
                                     : titleColor,
                                 blurRadius: 8,
@@ -209,16 +213,16 @@ class _ConnectTabState extends State<ConnectTab> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      service.isMuted ? 'SILENCIADO' : title,
+                      statusBadgeText,
                       style: ObsidianTheme.labelMd(
-                        color: service.isMuted
+                        color: pausedOrMuted
                             ? ObsidianTheme.signalClip
                             : titleColor,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
-                  if (service.isStreaming) ...[
+                  if (service.isStreaming || service.isInterrupted) ...[
                     GestureDetector(
                       onTap: service.toggleMute,
                       child: Container(
@@ -227,12 +231,12 @@ class _ConnectTabState extends State<ConnectTab> {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: service.isMuted
+                          color: pausedOrMuted
                               ? ObsidianTheme.signalClip.withValues(alpha: 0.16)
                               : ObsidianTheme.surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(999),
                           border: Border.all(
-                            color: service.isMuted
+                            color: pausedOrMuted
                                 ? ObsidianTheme.signalClip.withValues(alpha: 0.6)
                                 : ObsidianTheme.primary.withValues(alpha: 0.3),
                           ),
@@ -241,17 +245,19 @@ class _ConnectTabState extends State<ConnectTab> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              service.isMuted ? Icons.mic_off : Icons.mic,
+                              pausedOrMuted ? Icons.mic_off : Icons.mic,
                               size: 13,
-                              color: service.isMuted
+                              color: pausedOrMuted
                                   ? ObsidianTheme.signalClip
                                   : ObsidianTheme.primary,
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              service.isMuted ? 'SILENCIADO' : 'MUTE',
+                              service.isInterrupted
+                                  ? 'REANUDAR'
+                                  : (service.isMuted ? 'SILENCIADO' : 'MUTE'),
                               style: ObsidianTheme.labelSm(
-                                color: service.isMuted
+                                color: pausedOrMuted
                                     ? ObsidianTheme.signalClip
                                     : ObsidianTheme.primary,
                                 fontWeight: FontWeight.w600,

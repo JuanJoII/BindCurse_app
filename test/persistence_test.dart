@@ -174,6 +174,7 @@ void main() {
         writer.addDevice(name: 'Studio Rig', ip: '192.168.1.200', port: 5005);
         writer.setGainDb(6.5);
         writer.setLatencyTarget(LatencyTarget.ultraLow);
+        await writer.setInterruptionBehavior(MicInterruptionBehavior.alwaysActive);
         await writer.flushPreferences();
         writer.dispose();
 
@@ -189,6 +190,10 @@ void main() {
         expect(reader.devices.first.ip, '192.168.1.200');
         expect(reader.gainDb, 6.5);
         expect(reader.latencyTarget, LatencyTarget.ultraLow);
+        expect(
+          reader.interruptionBehavior,
+          MicInterruptionBehavior.alwaysActive,
+        );
         reader.dispose();
       } finally {
         if (await tempDir.exists()) {
